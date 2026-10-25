@@ -1,0 +1,51 @@
+# peerDependencies
+
+レジストリの SemVer 依存について、通常依存とは別の制約として peer を解決します。外部の npm / Arborist への委譲や追加依存はありません。
+
+## 解決規則
+
+- 必須 peer がなければ取得します。consumer 自身の `node_modules` には置かず、consumer の親または祖先から見える場所に配置します。
+- 同じ peer set を共有する consumer の範囲をすべて満たすバージョン・配置を優先して探索します。両立できなければ、既定では既存 peer のバージョン不一致を警告して続行します。
+- root の宣言は先に予約し、自動取得した peer が後続の直接依存を置き換えないようにします。peer の依存元パッケージ自体も、宣言範囲内の別バージョンを候補にできます。
+- 祖先への巻き上げで衝突する推移依存は、peer set とともに適切な親の下に分離します。peer を宣言するパッケージの下に同じ peer を隠す配置は許可しません。
+- peer 同士の循環も同じインスタンスを再利用します。スコープ付きの名前も通常の名前と同じ規則です。
+- `peerDependenciesMeta[name].optional = true` は自動取得しません。ただし他の依存によって見えるようになった場合は範囲を検証します。後からの巻き上げによって optional peer が有効になる場合も再検査します。
+- peer を無視しないかぎり、`ci` は既存 lockfile の peer の位置・必須 peer の存在を検証してから `node_modules` を削除します。バージョン不一致は既定では警告、strict モードでは削除前にエラーにします。
+- `ls --all` も peer を親から解決し、consumer の下に隠された peer を有効な peer とみなしません。
+
+## 競合ポリシー
+
+| 設定 | 動作 |
+| --- | --- |
+| 既定 | 直接依存・推移依存とも既存 peer のバージョン不一致は警告して続行します。必須 peer の欠落や consumer 自身の下への不正配置は引き続きエラーです。 |
+| `--strict-peer-deps` | peer のバージョン不一致も `ERESOLVE` にします。 |
+| `--force` / `-f` | strict モードでも peer のバージョン不一致を警告だけにします。存在しない必須パッケージを成功扱いにはしません。 |
+| `--legacy-peer-deps` | peer の自動取得・範囲検証を無効にします。 |
+| `--omit=peer` | 解決と lockfile への記録は実施し、peer 専用のパッケージだけディスクへの配置から除外します。通常依存としても必要なパッケージは残します。 |
+
+`strict-peer-deps`、`legacy-peer-deps`、`force` は `.npmrc` / `npm_config_*` でも設定できます。lockfile を作ったときと `ci` で、解決に関わる設定を揃えてください。
+
+たとえば consumer の peer 条件が `astro@^4.0.0` でも、プロジェクトが Astro 7 を使用していれば既定では警告して続行します。通常の dependencies の `^4.0.0` が 7 を含むようになるわけではありません。通常依存を宣言範囲を越えて更新する場合は `update --latest` を使います。
+
+`update --latest` でも peer 不一致は既定では警告、`--strict-peer-deps` ではエラーです。警告で続行できても実行時の API 互換性は保証しません。解決失敗時は `--latest` で準備した宣言も含め、プロジェクトの manifest / lockfile / node_modules を変更しません。
+
+この既定ポリシーは tnpm の意図的な選択です。npm は直接依存に起因する peer 競合を既定でも `ERESOLVE` にする場合があり、すべてのパッケージマネージャーに共通する動作ではありません。`ls --all` は診断用コマンドなので、許容してインストールした不一致も引き続き `invalid` として報告します。
+
+## lockfile と実装
+
+- `peerDependencies` / `peerDependenciesMeta` を lockfile v3 に保存します。
+- 到達経路から `peer` / `dev` / `optional` / `devOptional` を計算します。peer と通常依存の両方から使われるものを peer 専用と誤分類しません。
+- peer のない解決は並列の通常経路を使用します。peer set の解決ではネットワーク取得を探索から切り離し、候補メタデータを実行内で共有・並列取得します。
+- 既存の有効な lockfile は再探索せず利用します。完全な解決前に manifest やインストール済みツリーを書き換えません。
+- 異常なグラフによる暴走を防ぐため、50,000 パッケージ・128階層・200,000探索ステップの上限があります。
+
+## 検証と境界
+
+ローカルレジストリを使った結合テストで、必須自動取得、optional の未取得と存在時競合、共有範囲の再探索、異なる peer set の分離、consumer のバージョン再選択、循環、スコープ、競合ポリシー、ci の事前検証、omit、offline 再構築を確認しています。npm との scoped/cyclic peer lockfile 相互読み込みも別テストで確認します。
+
+```sh
+cargo test
+cargo test --test commands npm_and_tnpm_share_scoped_cyclic_peer_sets_and_optional_peer_metadata -- --ignored
+```
+
+これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspaces / file / Git / URL など、パッケージマネージャー全体で未対応の依存形式は peer に指定しても未対応です。

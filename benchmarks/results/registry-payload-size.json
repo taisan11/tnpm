@@ -1,0 +1,17 @@
+{
+  "package": "hono",
+  "url": "https://registry.npmjs.org/hono",
+  "identity": {
+    "encoded_payload_bytes": 6311465,
+    "source": "Content-Length and body length in the uncompressed HTTP/1.1 baseline"
+  },
+  "gzip_raw_probe": {
+    "http_version": "HTTP/1.1",
+    "content_encoding": "gzip",
+    "status": 200,
+    "encoded_payload_bytes": 267786,
+    "headers_ms": 139.74925,
+    "body_ms": 45.726124999999996
+  },
+  "notes": "Raw gzip probe disables automatic decompression and checks the gzip magic bytes. Sizes are HTTP body bytes, not HTTP/TLS framing. The single raw probe is used for size, not latency comparison. All four decoded CLI variants received 6311465 bytes."
+}

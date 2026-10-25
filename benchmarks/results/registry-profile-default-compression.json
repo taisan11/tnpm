@@ -1,0 +1,300 @@
+{
+  "measuredAt": "2026-10-24T01:21:55.971Z",
+  "label": "default-compression",
+  "transport": "default",
+  "binary": "/Users/taisan11/Documents/tnpm/target/release/tnpm",
+  "args": [
+    "view",
+    "hono@4.13.13",
+    "version",
+    "--registry",
+    "https://registry.npmjs.org/",
+    "--no-cache"
+  ],
+  "samples": 5,
+  "cache": false,
+  "spec": "hono@4.13.13",
+  "summary": {
+    "wall_ms": {
+      "avg": 182.9312668,
+      "min": 168.31104100000005,
+      "max": 208.8689169999999
+    },
+    "registry": {
+      "cache_read_ms": {
+        "avg": 0.0045748,
+        "min": 0.004083,
+        "max": 0.005125
+      },
+      "cache_resolve_ms": {
+        "avg": 0.0003666,
+        "min": 0.000292,
+        "max": 0.000458
+      },
+      "client_build_ms": {
+        "avg": 2.4950668,
+        "min": 2.3325,
+        "max": 2.798209
+      },
+      "request_build_ms": {
+        "avg": 0.005649800000000001,
+        "min": 0.005125,
+        "max": 0.006541
+      },
+      "headers_ms": {
+        "avg": 114.47295020000001,
+        "min": 96.265125,
+        "max": 124.213083
+      },
+      "policy_ms": {
+        "avg": 0.0145832,
+        "min": 0.012542,
+        "max": 0.016291
+      },
+      "body_ms": {
+        "avg": 33.2998002,
+        "min": 20.6025,
+        "max": 70.050167
+      },
+      "utf8_ms": {
+        "avg": 0.9502582,
+        "min": 0.827167,
+        "max": 1.165291
+      },
+      "json_parse_ms": {
+        "avg": 21.7326416,
+        "min": 19.208833,
+        "max": 27.351042
+      },
+      "resolve_ms": {
+        "avg": 0.3669498,
+        "min": 0.342625,
+        "max": 0.432083
+      },
+      "cache_write_ms": {
+        "avg": 0.00035860000000000004,
+        "min": 0.000333,
+        "max": 0.000417
+      },
+      "json_tree_drop_ms": {
+        "avg": 4.4087916,
+        "min": 4.032666,
+        "max": 5.004458
+      },
+      "total_ms": {
+        "avg": 177.7641664,
+        "min": 163.350625,
+        "max": 203.106583
+      }
+    },
+    "view": {
+      "prepare_ms": {
+        "avg": 0.010900000000000002,
+        "min": 0.009625,
+        "max": 0.012584
+      },
+      "registry_ms": {
+        "avg": 177.8297,
+        "min": 163.412167,
+        "max": 203.183542
+      },
+      "render_ms": {
+        "avg": 0.10245839999999999,
+        "min": 0.090917,
+        "max": 0.119416
+      },
+      "total_ms": {
+        "avg": 177.9571332,
+        "min": 163.536791,
+        "max": 203.330833
+      }
+    }
+  },
+  "runs": [
+    {
+      "wall_ms": 208.8689169999999,
+      "profiles": [
+        {
+          "build_features": "reqwest-defaults,gzip,brotli,deflate,zstd",
+          "transport_config": "default",
+          "accept_encoding": "gzip, br, zstd, deflate",
+          "cache_read_ms": 0.004875,
+          "cache_resolve_ms": 0.000458,
+          "client_build_ms": 2.798209,
+          "request_build_ms": 0.006541,
+          "headers_ms": 96.265125,
+          "status": 200,
+          "http_version": "HTTP/2.0",
+          "content_encoding": "identity-or-decoded",
+          "remote_addr": "104.16.9.34:443",
+          "policy_ms": 0.014292,
+          "body_ms": 70.050167,
+          "decoded_body_bytes": 6311465,
+          "utf8_ms": 1.165291,
+          "json_parse_ms": 27.351042,
+          "resolve_ms": 0.432083,
+          "cache_write_ms": 0.000417,
+          "json_tree_drop_ms": 5.004458,
+          "source": "network",
+          "section": "registry",
+          "total_ms": 203.106583
+        },
+        {
+          "prepare_ms": 0.0115,
+          "registry_ms": 203.183542,
+          "render_ms": 0.119416,
+          "section": "view",
+          "total_ms": 203.330833
+        }
+      ]
+    },
+    {
+      "wall_ms": 177.60795800000005,
+      "profiles": [
+        {
+          "build_features": "reqwest-defaults,gzip,brotli,deflate,zstd",
+          "transport_config": "default",
+          "accept_encoding": "gzip, br, zstd, deflate",
+          "cache_read_ms": 0.005125,
+          "cache_resolve_ms": 0.000333,
+          "client_build_ms": 2.528375,
+          "request_build_ms": 0.005875,
+          "headers_ms": 120.700417,
+          "status": 200,
+          "http_version": "HTTP/2.0",
+          "content_encoding": "identity-or-decoded",
+          "remote_addr": "104.16.9.34:443",
+          "policy_ms": 0.014708,
+          "body_ms": 21.47775,
+          "decoded_body_bytes": 6311465,
+          "utf8_ms": 0.8905,
+          "json_parse_ms": 21.653042,
+          "resolve_ms": 0.353958,
+          "cache_write_ms": 0.000333,
+          "json_tree_drop_ms": 4.381125,
+          "source": "network",
+          "section": "registry",
+          "total_ms": 172.022083
+        },
+        {
+          "prepare_ms": 0.012584,
+          "registry_ms": 172.088291,
+          "render_ms": 0.090917,
+          "section": "view",
+          "total_ms": 172.206167
+        }
+      ]
+    },
+    {
+      "wall_ms": 168.31104100000005,
+      "profiles": [
+        {
+          "build_features": "reqwest-defaults,gzip,brotli,deflate,zstd",
+          "transport_config": "default",
+          "accept_encoding": "gzip, br, zstd, deflate",
+          "cache_read_ms": 0.004708,
+          "cache_resolve_ms": 0.000333,
+          "client_build_ms": 2.445667,
+          "request_build_ms": 0.005458,
+          "headers_ms": 115.757792,
+          "status": 200,
+          "http_version": "HTTP/2.0",
+          "content_encoding": "identity-or-decoded",
+          "remote_addr": "104.16.9.34:443",
+          "policy_ms": 0.012542,
+          "body_ms": 20.6025,
+          "decoded_body_bytes": 6311465,
+          "utf8_ms": 0.871375,
+          "json_parse_ms": 19.208833,
+          "resolve_ms": 0.343958,
+          "cache_write_ms": 0.000375,
+          "json_tree_drop_ms": 4.085334,
+          "source": "network",
+          "section": "registry",
+          "total_ms": 163.350625
+        },
+        {
+          "prepare_ms": 0.010791,
+          "registry_ms": 163.412167,
+          "render_ms": 0.100667,
+          "section": "view",
+          "total_ms": 163.536791
+        }
+      ]
+    },
+    {
+      "wall_ms": 191.266709,
+      "profiles": [
+        {
+          "build_features": "reqwest-defaults,gzip,brotli,deflate,zstd",
+          "transport_config": "default",
+          "accept_encoding": "gzip, br, zstd, deflate",
+          "cache_read_ms": 0.004083,
+          "cache_resolve_ms": 0.000417,
+          "client_build_ms": 2.3325,
+          "request_build_ms": 0.005125,
+          "headers_ms": 124.213083,
+          "status": 200,
+          "http_version": "HTTP/2.0",
+          "content_encoding": "identity-or-decoded",
+          "remote_addr": "104.16.9.34:443",
+          "policy_ms": 0.015083,
+          "body_ms": 33.184667,
+          "decoded_body_bytes": 6311465,
+          "utf8_ms": 0.996958,
+          "json_parse_ms": 20.841375,
+          "resolve_ms": 0.362125,
+          "cache_write_ms": 0.000334,
+          "json_tree_drop_ms": 4.540375,
+          "source": "network",
+          "section": "registry",
+          "total_ms": 186.509666
+        },
+        {
+          "prepare_ms": 0.009625,
+          "registry_ms": 186.573167,
+          "render_ms": 0.100375,
+          "section": "view",
+          "total_ms": 186.696834
+        }
+      ]
+    },
+    {
+      "wall_ms": 168.60170900000003,
+      "profiles": [
+        {
+          "build_features": "reqwest-defaults,gzip,brotli,deflate,zstd",
+          "transport_config": "default",
+          "accept_encoding": "gzip, br, zstd, deflate",
+          "cache_read_ms": 0.004083,
+          "cache_resolve_ms": 0.000292,
+          "client_build_ms": 2.370583,
+          "request_build_ms": 0.00525,
+          "headers_ms": 115.428334,
+          "status": 200,
+          "http_version": "HTTP/2.0",
+          "content_encoding": "identity-or-decoded",
+          "remote_addr": "104.16.9.34:443",
+          "policy_ms": 0.016291,
+          "body_ms": 21.183917,
+          "decoded_body_bytes": 6311465,
+          "utf8_ms": 0.827167,
+          "json_parse_ms": 19.608916,
+          "resolve_ms": 0.342625,
+          "cache_write_ms": 0.000334,
+          "json_tree_drop_ms": 4.032666,
+          "source": "network",
+          "section": "registry",
+          "total_ms": 163.831875
+        },
+        {
+          "prepare_ms": 0.01,
+          "registry_ms": 163.891333,
+          "render_ms": 0.100917,
+          "section": "view",
+          "total_ms": 164.015041
+        }
+      ]
+    }
+  ]
+}

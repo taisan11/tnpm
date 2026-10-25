@@ -1,0 +1,17 @@
+{
+  "name": "tnpm-cli-benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node bench.mjs",
+    "bench:install": "node install.mjs",
+    "bench:graph": "node graph.mjs",
+    "bench:cache": "node cache.mjs",
+    "bench:profile": "node profile-network.mjs",
+    "bench:transport": "node compare-network.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "mitata": "1.0.34"
+  }
+}

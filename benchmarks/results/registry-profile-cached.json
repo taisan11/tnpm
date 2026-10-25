@@ -1,0 +1,163 @@
+{
+  "measuredAt": "2026-10-24T01:08:20.003Z",
+  "label": "cached",
+  "binary": "/Users/taisan11/Documents/tnpm/target/release/tnpm",
+  "args": [
+    "view",
+    "hono@4.13.13",
+    "version",
+    "--registry",
+    "https://registry.npmjs.org/"
+  ],
+  "samples": 5,
+  "cache": true,
+  "spec": "hono@4.13.13",
+  "summary": {
+    "wall_ms": {
+      "avg": 13.431966399999988,
+      "min": 12.365624999999966,
+      "max": 15.283208000000002
+    },
+    "registry": {
+      "cache_read_ms": {
+        "avg": 9.356100000000001,
+        "min": 8.7545,
+        "max": 10.495917
+      },
+      "cache_resolve_ms": {
+        "avg": 0.4615832,
+        "min": 0.429917,
+        "max": 0.519208
+      },
+      "total_ms": {
+        "avg": 9.820741799999999,
+        "min": 9.186667,
+        "max": 11.018292
+      }
+    },
+    "view": {
+      "prepare_ms": {
+        "avg": 0.0094084,
+        "min": 0.008584,
+        "max": 0.010625
+      },
+      "registry_ms": {
+        "avg": 9.843941599999999,
+        "min": 9.206583,
+        "max": 11.045917
+      },
+      "render_ms": {
+        "avg": 0.0923834,
+        "min": 0.083708,
+        "max": 0.099833
+      },
+      "total_ms": {
+        "avg": 9.961575,
+        "min": 9.327041,
+        "max": 11.171834
+      }
+    }
+  },
+  "runs": [
+    {
+      "wall_ms": 15.283208000000002,
+      "profiles": [
+        {
+          "build_features": "gzip=false,http2=false",
+          "cache_read_ms": 10.495917,
+          "cache_resolve_ms": 0.519208,
+          "source": "fresh-cache",
+          "section": "registry",
+          "total_ms": 11.018292
+        },
+        {
+          "prepare_ms": 0.0105,
+          "registry_ms": 11.045917,
+          "render_ms": 0.099833,
+          "section": "view",
+          "total_ms": 11.171834
+        }
+      ]
+    },
+    {
+      "wall_ms": 13.910082999999986,
+      "profiles": [
+        {
+          "build_features": "gzip=false,http2=false",
+          "cache_read_ms": 9.6465,
+          "cache_resolve_ms": 0.478125,
+          "source": "fresh-cache",
+          "section": "registry",
+          "total_ms": 10.127
+        },
+        {
+          "prepare_ms": 0.010625,
+          "registry_ms": 10.151291,
+          "render_ms": 0.099542,
+          "section": "view",
+          "total_ms": 10.280833
+        }
+      ]
+    },
+    {
+      "wall_ms": 12.968957999999986,
+      "profiles": [
+        {
+          "build_features": "gzip=false,http2=false",
+          "cache_read_ms": 9.096125,
+          "cache_resolve_ms": 0.441416,
+          "source": "fresh-cache",
+          "section": "registry",
+          "total_ms": 9.542625
+        },
+        {
+          "prepare_ms": 0.008584,
+          "registry_ms": 9.565375,
+          "render_ms": 0.083708,
+          "section": "view",
+          "total_ms": 9.670959
+        }
+      ]
+    },
+    {
+      "wall_ms": 12.631957999999997,
+      "profiles": [
+        {
+          "build_features": "gzip=false,http2=false",
+          "cache_read_ms": 8.7545,
+          "cache_resolve_ms": 0.429917,
+          "source": "fresh-cache",
+          "section": "registry",
+          "total_ms": 9.186667
+        },
+        {
+          "prepare_ms": 0.008708,
+          "registry_ms": 9.206583,
+          "render_ms": 0.094209,
+          "section": "view",
+          "total_ms": 9.327041
+        }
+      ]
+    },
+    {
+      "wall_ms": 12.365624999999966,
+      "profiles": [
+        {
+          "build_features": "gzip=false,http2=false",
+          "cache_read_ms": 8.787458,
+          "cache_resolve_ms": 0.43925,
+          "source": "fresh-cache",
+          "section": "registry",
+          "total_ms": 9.229125
+        },
+        {
+          "prepare_ms": 0.008625,
+          "registry_ms": 9.250542,
+          "render_ms": 0.084625,
+          "section": "view",
+          "total_ms": 9.357208
+        }
+      ]
+    }
+  ]
+}

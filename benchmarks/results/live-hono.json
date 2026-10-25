@@ -1,0 +1,335 @@
+{
+  "metadata": {
+    "measuredAt": "2026-10-24T01:23:01.194Z",
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "cpu": "Apple M4",
+    "logicalCpus": 10,
+    "memoryBytes": 17179869184,
+    "node": "v26.12.1",
+    "mitata": "1.0.34",
+    "npm": "11.20.0",
+    "tnpm": "0.1.0",
+    "bun": "1.4.4",
+    "selectedTools": [
+      "npm",
+      "tnpm",
+      "bun"
+    ],
+    "tnpmBinary": "/Users/taisan11/Documents/tnpm/target/release/tnpm",
+    "build": "cargo build --release (must be built before running)",
+    "samplesRequested": 5,
+    "concurrency": 1,
+    "mode": "live",
+    "fixture": {
+      "registry": "https://registry.npmjs.org/",
+      "package": {
+        "name": "hono",
+        "version": "4.13.13",
+        "spec": "hono@4.13.13",
+        "resolvedBy": "npm"
+      },
+      "httpRequestsObservable": false,
+      "npmLockfile": false,
+      "bunLockfile": false
+    },
+    "timing": "Subprocess wall time, including process startup, CLI work and draining stdout/stderr; no shell. Setup/build/cache warmup excluded."
+  },
+  "results": [
+    {
+      "name": "view version / force network",
+      "tools": {
+        "npm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "version",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--prefer-online"
+          ],
+          "kind": "fn",
+          "samples": [
+            194341665.99999976,
+            203186334,
+            206456833,
+            217686459,
+            227447583
+          ],
+          "min": 194341665.99999976,
+          "max": 227447583,
+          "p25": 203186334,
+          "p50": 206456833,
+          "p75": 217686459,
+          "p99": 217686459,
+          "p999": 217686459,
+          "avg": 209823774.99999994,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "tnpm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "version",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            168877041,
+            188146875,
+            190657292,
+            206415708,
+            221305333
+          ],
+          "min": 168877041,
+          "max": 221305333,
+          "p25": 188146875,
+          "p50": 190657292,
+          "p75": 206415708,
+          "p99": 206415708,
+          "p999": 206415708,
+          "avg": 195080449.8,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "bun": {
+          "args": [
+            "info",
+            "hono@4.13.13",
+            "version",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--cache-dir",
+            "/var/folders/d3/5zg0103n5p55t56pw70d28tw0000gp/T/opencode/tnpm-bench-KukYR0/bun/.bun/install/cache",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            129871333,
+            137310417,
+            146965208,
+            152523291,
+            201226958
+          ],
+          "min": 129871333,
+          "max": 201226958,
+          "p25": 137310417,
+          "p50": 146965208,
+          "p75": 152523291,
+          "p99": 152523291,
+          "p999": 152523291,
+          "avg": 153579441.4,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        }
+      },
+      "relativeToTnpm": {
+        "npm": 1.0755756161886805,
+        "bun": 0.78726208370676
+      },
+      "speedup": 1.0755756161886805
+    },
+    {
+      "name": "view --json / force network",
+      "tools": {
+        "tnpm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "--json",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            175859250,
+            196400333,
+            198623583,
+            226173334,
+            233062666
+          ],
+          "min": 175859250,
+          "max": 233062666,
+          "p25": 196400333,
+          "p50": 198623583,
+          "p75": 226173334,
+          "p99": 226173334,
+          "p999": 226173334,
+          "avg": 206023833.2,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "bun": {
+          "args": [
+            "info",
+            "hono@4.13.13",
+            "--json",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--cache-dir",
+            "/var/folders/d3/5zg0103n5p55t56pw70d28tw0000gp/T/opencode/tnpm-bench-KukYR0/bun/.bun/install/cache",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            195564457.9999981,
+            218987458.99999905,
+            220009875,
+            253224709,
+            292972500
+          ],
+          "min": 195564457.9999981,
+          "max": 292972500,
+          "p25": 218987458.99999905,
+          "p50": 220009875,
+          "p75": 253224709,
+          "p99": 253224709,
+          "p999": 253224709,
+          "avg": 236151800.19999942,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "npm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "--json",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--prefer-online"
+          ],
+          "kind": "fn",
+          "samples": [
+            205867166,
+            206537042,
+            220586584,
+            229581042,
+            241199834
+          ],
+          "min": 205867166,
+          "max": 241199834,
+          "p25": 206537042,
+          "p50": 220586584,
+          "p75": 229581042,
+          "p99": 229581042,
+          "p999": 229581042,
+          "avg": 220754333.6,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        }
+      },
+      "relativeToTnpm": {
+        "npm": 1.0714990114066085,
+        "bun": 1.146235348270374
+      },
+      "speedup": 1.0714990114066085
+    },
+    {
+      "name": "view summary / force network",
+      "tools": {
+        "bun": {
+          "args": [
+            "info",
+            "hono@4.13.13",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--cache-dir",
+            "/var/folders/d3/5zg0103n5p55t56pw70d28tw0000gp/T/opencode/tnpm-bench-KukYR0/bun/.bun/install/cache",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            161329500,
+            167055958,
+            177598250,
+            187227375,
+            203258708
+          ],
+          "min": 161329500,
+          "max": 203258708,
+          "p25": 167055958,
+          "p50": 177598250,
+          "p75": 187227375,
+          "p99": 187227375,
+          "p999": 187227375,
+          "avg": 179293958.2,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "npm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--prefer-online"
+          ],
+          "kind": "fn",
+          "samples": [
+            205556208,
+            212015167,
+            218298417,
+            222477750,
+            231681958
+          ],
+          "min": 205556208,
+          "max": 231681958,
+          "p25": 212015167,
+          "p50": 218298417,
+          "p75": 222477750,
+          "p99": 222477750,
+          "p999": 222477750,
+          "avg": 218005900,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        },
+        "tnpm": {
+          "args": [
+            "view",
+            "hono@4.13.13",
+            "--registry",
+            "https://registry.npmjs.org/",
+            "--no-cache"
+          ],
+          "kind": "fn",
+          "samples": [
+            168927917,
+            178732125,
+            217596582.9999981,
+            218613790.9999981,
+            258990125
+          ],
+          "min": 168927917,
+          "max": 258990125,
+          "p25": 178732125,
+          "p50": 217596582.9999981,
+          "p75": 218613790.9999981,
+          "p99": 218613790.9999981,
+          "p999": 218613790.9999981,
+          "avg": 208572108.19999924,
+          "ticks": 5,
+          "invocations": 6,
+          "httpRequests": null
+        }
+      },
+      "relativeToTnpm": {
+        "npm": 1.0452303612473184,
+        "bun": 0.8596257656276624
+      },
+      "speedup": 1.0452303612473184
+    }
+  ]
+}

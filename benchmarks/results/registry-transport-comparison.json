@@ -1,0 +1,786 @@
+{
+  "measuredAt": "2026-10-24T01:07:15.461Z",
+  "spec": "hono@4.13.13",
+  "samples": 5,
+  "order": "rotated every round",
+  "binaries": {
+    "baseline": "/Users/taisan11/Documents/tnpm/target/release/tnpm",
+    "gzip": "/Users/taisan11/Documents/tnpm/target/profiles/tnpm-gzip",
+    "http2": "/Users/taisan11/Documents/tnpm/target/profiles/tnpm-http2",
+    "both": "/Users/taisan11/Documents/tnpm/target/profiles/tnpm-both"
+  },
+  "summary": {
+    "baseline": {
+      "wall_ms": 342.86306659999974,
+      "headers_ms": 77.1722664,
+      "body_ms": 223.52487459999998,
+      "json_parse_ms": 28.639491399999997,
+      "resolve_ms": 0.4586168,
+      "json_tree_drop_ms": 5.2913331999999995,
+      "decoded_body_bytes": 6311465,
+      "protocols": [
+        "HTTP/1.1"
+      ],
+      "build_features": "gzip=false,http2=false"
+    },
+    "gzip": {
+      "wall_ms": 179.05456680000015,
+      "headers_ms": 115.6706248,
+      "body_ms": 31.117375,
+      "json_parse_ms": 21.386708,
+      "resolve_ms": 0.35135859999999997,
+      "json_tree_drop_ms": 4.1178,
+      "decoded_body_bytes": 6311465,
+      "protocols": [
+        "HTTP/1.1"
+      ],
+      "build_features": "gzip=true,http2=false"
+    },
+    "http2": {
+      "wall_ms": 358.76719979999996,
+      "headers_ms": 80.020175,
+      "body_ms": 234.9125416,
+      "json_parse_ms": 30.41615,
+      "resolve_ms": 0.4601585999999999,
+      "json_tree_drop_ms": 5.3415332,
+      "decoded_body_bytes": 6311465,
+      "protocols": [
+        "HTTP/2.0"
+      ],
+      "build_features": "gzip=false,http2=true"
+    },
+    "both": {
+      "wall_ms": 197.1215167999998,
+      "headers_ms": 130.27784179999998,
+      "body_ms": 32.8788836,
+      "json_parse_ms": 22.7152834,
+      "resolve_ms": 0.34540839999999995,
+      "json_tree_drop_ms": 4.285875,
+      "decoded_body_bytes": 6311465,
+      "protocols": [
+        "HTTP/2.0"
+      ],
+      "build_features": "gzip=true,http2=true"
+    }
+  },
+  "runs": {
+    "baseline": [
+      {
+        "wall_ms": 306.779125,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=false",
+            "cache_read_ms": 0.002708,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.039375,
+            "request_build_ms": 0.0035,
+            "headers_ms": 83.571583,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.016167,
+            "body_ms": 187.614458,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 2.451959,
+            "json_parse_ms": 23.628916,
+            "resolve_ms": 0.339917,
+            "cache_write_ms": 0.0005,
+            "json_tree_drop_ms": 3.928625,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 301.611125
+          },
+          {
+            "prepare_ms": 0.011875,
+            "registry_ms": 301.673959,
+            "render_ms": 0.105083,
+            "section": "view",
+            "total_ms": 301.8055
+          }
+        ]
+      },
+      {
+        "wall_ms": 348.36062499999935,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=false",
+            "cache_read_ms": 0.002708,
+            "cache_resolve_ms": 0.000417,
+            "client_build_ms": 0.03825,
+            "request_build_ms": 0.00375,
+            "headers_ms": 78.190333,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.015459,
+            "body_ms": 224.409583,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.747208,
+            "json_parse_ms": 31.733875,
+            "resolve_ms": 0.5215,
+            "cache_write_ms": 0.001334,
+            "json_tree_drop_ms": 6.089208,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 342.775417
+          },
+          {
+            "prepare_ms": 0.011667,
+            "registry_ms": 342.868458,
+            "render_ms": 0.1395,
+            "section": "view",
+            "total_ms": 343.037542
+          }
+        ]
+      },
+      {
+        "wall_ms": 372.14787499999966,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=false",
+            "cache_read_ms": 0.002666,
+            "cache_resolve_ms": 0.000459,
+            "client_build_ms": 0.038291,
+            "request_build_ms": 0.003459,
+            "headers_ms": 75.527875,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.015208,
+            "body_ms": 250.353208,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 2.125584,
+            "json_parse_ms": 32.252875,
+            "resolve_ms": 0.488875,
+            "cache_write_ms": 0.00075,
+            "json_tree_drop_ms": 5.8135,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 366.640416
+          },
+          {
+            "prepare_ms": 0.011375,
+            "registry_ms": 366.728792,
+            "render_ms": 0.141958,
+            "section": "view",
+            "total_ms": 366.900542
+          }
+        ]
+      },
+      {
+        "wall_ms": 309.0329579999998,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=false",
+            "cache_read_ms": 0.002667,
+            "cache_resolve_ms": 0.000458,
+            "client_build_ms": 0.038459,
+            "request_build_ms": 0.0035,
+            "headers_ms": 73.435708,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.013625,
+            "body_ms": 201.116958,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.979917,
+            "json_parse_ms": 23.456458,
+            "resolve_ms": 0.431792,
+            "cache_write_ms": 0.000625,
+            "json_tree_drop_ms": 4.637458,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 304.13025
+          },
+          {
+            "prepare_ms": 0.01175,
+            "registry_ms": 304.198375,
+            "render_ms": 0.111583,
+            "section": "view",
+            "total_ms": 304.337458
+          }
+        ]
+      },
+      {
+        "wall_ms": 377.99474999999984,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=false",
+            "cache_read_ms": 0.004375,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.058084,
+            "request_build_ms": 0.006708,
+            "headers_ms": 75.135833,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.014959,
+            "body_ms": 254.130166,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 2.354667,
+            "json_parse_ms": 32.125333,
+            "resolve_ms": 0.511,
+            "cache_write_ms": 0.000792,
+            "json_tree_drop_ms": 5.987875,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 370.354042
+          },
+          {
+            "prepare_ms": 0.020167,
+            "registry_ms": 370.44875,
+            "render_ms": 0.148333,
+            "section": "view",
+            "total_ms": 370.634667
+          }
+        ]
+      }
+    ],
+    "gzip": [
+      {
+        "wall_ms": 164.04320800000005,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=false",
+            "cache_read_ms": 0.002542,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.033958,
+            "request_build_ms": 0.003792,
+            "headers_ms": 113.321125,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.017125,
+            "body_ms": 20.717458,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.827667,
+            "json_parse_ms": 20.050583,
+            "resolve_ms": 0.335292,
+            "cache_write_ms": 0.000375,
+            "json_tree_drop_ms": 3.995,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 159.317334
+          },
+          {
+            "prepare_ms": 0.010834,
+            "registry_ms": 159.378583,
+            "render_ms": 0.10525,
+            "section": "view",
+            "total_ms": 159.510209
+          }
+        ]
+      },
+      {
+        "wall_ms": 194.45633399999997,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=false",
+            "cache_read_ms": 0.002584,
+            "cache_resolve_ms": 0.000458,
+            "client_build_ms": 0.038542,
+            "request_build_ms": 0.00425,
+            "headers_ms": 117.974291,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.018834,
+            "body_ms": 42.304708,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.144583,
+            "json_parse_ms": 23.090417,
+            "resolve_ms": 0.378625,
+            "cache_write_ms": 0.000458,
+            "json_tree_drop_ms": 4.33425,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 189.302792
+          },
+          {
+            "prepare_ms": 0.013542,
+            "registry_ms": 189.364666,
+            "render_ms": 0.108917,
+            "section": "view",
+            "total_ms": 189.503333
+          }
+        ]
+      },
+      {
+        "wall_ms": 168.0132080000003,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=false",
+            "cache_read_ms": 0.003125,
+            "cache_resolve_ms": 0.0005,
+            "client_build_ms": 0.043333,
+            "request_build_ms": 0.005625,
+            "headers_ms": 87.556958,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.014917,
+            "body_ms": 47.462792,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.934625,
+            "json_parse_ms": 21.676166,
+            "resolve_ms": 0.345667,
+            "cache_write_ms": 0.000375,
+            "json_tree_drop_ms": 4.11725,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 162.172166
+          },
+          {
+            "prepare_ms": 0.014834,
+            "registry_ms": 162.2375,
+            "render_ms": 0.106291,
+            "section": "view",
+            "total_ms": 162.373584
+          }
+        ]
+      },
+      {
+        "wall_ms": 171.93508399999973,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=false",
+            "cache_read_ms": 0.0025,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.034125,
+            "request_build_ms": 0.00425,
+            "headers_ms": 116.504083,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.016625,
+            "body_ms": 24.670583,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.817917,
+            "json_parse_ms": 20.498458,
+            "resolve_ms": 0.34625,
+            "cache_write_ms": 0.000584,
+            "json_tree_drop_ms": 4.06625,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 166.973458
+          },
+          {
+            "prepare_ms": 0.011375,
+            "registry_ms": 167.036125,
+            "render_ms": 0.100042,
+            "section": "view",
+            "total_ms": 167.162875
+          }
+        ]
+      },
+      {
+        "wall_ms": 196.82500000000073,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=false",
+            "cache_read_ms": 0.002875,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.040125,
+            "request_build_ms": 0.004708,
+            "headers_ms": 142.996667,
+            "status": 200,
+            "http_version": "HTTP/1.1",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.025166,
+            "body_ms": 20.431334,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.909,
+            "json_parse_ms": 21.617916,
+            "resolve_ms": 0.350959,
+            "cache_write_ms": 0.000375,
+            "json_tree_drop_ms": 4.07625,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 190.466541
+          },
+          {
+            "prepare_ms": 0.012833,
+            "registry_ms": 190.529583,
+            "render_ms": 0.109125,
+            "section": "view",
+            "total_ms": 190.667416
+          }
+        ]
+      }
+    ],
+    "http2": [
+      {
+        "wall_ms": 319.9822079999999,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=true",
+            "cache_read_ms": 0.00275,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.037916,
+            "request_build_ms": 0.004542,
+            "headers_ms": 81.981625,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.01525,
+            "body_ms": 194.335083,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.656459,
+            "json_parse_ms": 31.134541,
+            "resolve_ms": 0.464125,
+            "cache_write_ms": 0.001125,
+            "json_tree_drop_ms": 5.272875,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 314.919458
+          },
+          {
+            "prepare_ms": 0.011833,
+            "registry_ms": 314.9935,
+            "render_ms": 0.111458,
+            "section": "view",
+            "total_ms": 315.134666
+          }
+        ]
+      },
+      {
+        "wall_ms": 382.9730830000003,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=true",
+            "cache_read_ms": 0.002708,
+            "cache_resolve_ms": 0.000333,
+            "client_build_ms": 0.040625,
+            "request_build_ms": 0.004667,
+            "headers_ms": 79.076792,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.015833,
+            "body_ms": 257.887375,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.681875,
+            "json_parse_ms": 31.778583,
+            "resolve_ms": 0.484209,
+            "cache_write_ms": 0.001,
+            "json_tree_drop_ms": 5.907791,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 376.905083
+          },
+          {
+            "prepare_ms": 0.012458,
+            "registry_ms": 377.003042,
+            "render_ms": 0.145,
+            "section": "view",
+            "total_ms": 377.180167
+          }
+        ]
+      },
+      {
+        "wall_ms": 368.5106249999999,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=true",
+            "cache_read_ms": 0.004542,
+            "cache_resolve_ms": 0.000583,
+            "client_build_ms": 0.064875,
+            "request_build_ms": 0.008458,
+            "headers_ms": 79.739542,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.018708,
+            "body_ms": 243.541625,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.66625,
+            "json_parse_ms": 30.474334,
+            "resolve_ms": 0.450125,
+            "cache_write_ms": 0.000666,
+            "json_tree_drop_ms": 5.206125,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 361.1895
+          },
+          {
+            "prepare_ms": 0.024334,
+            "registry_ms": 361.268833,
+            "render_ms": 0.131917,
+            "section": "view",
+            "total_ms": 361.445667
+          }
+        ]
+      },
+      {
+        "wall_ms": 352.23983299999963,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=true",
+            "cache_read_ms": 0.002708,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.038333,
+            "request_build_ms": 0.004209,
+            "headers_ms": 75.501666,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.016375,
+            "body_ms": 231.625042,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.60825,
+            "json_parse_ms": 31.485875,
+            "resolve_ms": 0.498417,
+            "cache_write_ms": 0.001,
+            "json_tree_drop_ms": 5.71875,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 346.524625
+          },
+          {
+            "prepare_ms": 0.011834,
+            "registry_ms": 346.619291,
+            "render_ms": 0.140375,
+            "section": "view",
+            "total_ms": 346.790875
+          }
+        ]
+      },
+      {
+        "wall_ms": 370.13025000000016,
+        "profiles": [
+          {
+            "build_features": "gzip=false,http2=true",
+            "cache_read_ms": 0.002791,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.04025,
+            "request_build_ms": 0.004542,
+            "headers_ms": 83.80125,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "content_length": 6311465,
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.018417,
+            "body_ms": 247.173583,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.743958,
+            "json_parse_ms": 27.207417,
+            "resolve_ms": 0.403917,
+            "cache_write_ms": 0.000708,
+            "json_tree_drop_ms": 4.602125,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 365.011833
+          },
+          {
+            "prepare_ms": 0.012291,
+            "registry_ms": 365.0845,
+            "render_ms": 0.108625,
+            "section": "view",
+            "total_ms": 365.222041
+          }
+        ]
+      }
+    ],
+    "both": [
+      {
+        "wall_ms": 192.76324999999997,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=true",
+            "cache_read_ms": 0.003,
+            "cache_resolve_ms": 0.000458,
+            "client_build_ms": 0.041,
+            "request_build_ms": 0.005667,
+            "headers_ms": 123.278792,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.01975,
+            "body_ms": 35.339333,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.95875,
+            "json_parse_ms": 23.06275,
+            "resolve_ms": 0.344917,
+            "cache_write_ms": 0.000416,
+            "json_tree_drop_ms": 4.2005,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 187.265333
+          },
+          {
+            "prepare_ms": 0.013083,
+            "registry_ms": 187.332208,
+            "render_ms": 0.098417,
+            "section": "view",
+            "total_ms": 187.459958
+          }
+        ]
+      },
+      {
+        "wall_ms": 172.77166700000043,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=true",
+            "cache_read_ms": 0.003042,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.043375,
+            "request_build_ms": 0.005708,
+            "headers_ms": 118.147542,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.017541,
+            "body_ms": 21.7535,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.865625,
+            "json_parse_ms": 21.053334,
+            "resolve_ms": 0.328,
+            "cache_write_ms": 0.000375,
+            "json_tree_drop_ms": 4.130375,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 166.35975
+          },
+          {
+            "prepare_ms": 0.01425,
+            "registry_ms": 166.426083,
+            "render_ms": 0.102042,
+            "section": "view",
+            "total_ms": 166.557542
+          }
+        ]
+      },
+      {
+        "wall_ms": 183.01549999999952,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=true",
+            "cache_read_ms": 0.003041,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.041375,
+            "request_build_ms": 0.005625,
+            "headers_ms": 128.827375,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.022,
+            "body_ms": 22.836584,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.824583,
+            "json_parse_ms": 20.574625,
+            "resolve_ms": 0.319667,
+            "cache_write_ms": 0.000291,
+            "json_tree_drop_ms": 4.119042,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 177.5875
+          },
+          {
+            "prepare_ms": 0.013583,
+            "registry_ms": 177.651333,
+            "render_ms": 0.102084,
+            "section": "view",
+            "total_ms": 177.782083
+          }
+        ]
+      },
+      {
+        "wall_ms": 181.62404199999946,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=true",
+            "cache_read_ms": 0.002666,
+            "cache_resolve_ms": 0.000375,
+            "client_build_ms": 0.037584,
+            "request_build_ms": 0.005333,
+            "headers_ms": 100.91075,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.018333,
+            "body_ms": 49.115959,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 0.863875,
+            "json_parse_ms": 21.387166,
+            "resolve_ms": 0.330917,
+            "cache_write_ms": 0.000375,
+            "json_tree_drop_ms": 4.086458,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 176.771208
+          },
+          {
+            "prepare_ms": 0.012167,
+            "registry_ms": 176.836458,
+            "render_ms": 0.101833,
+            "section": "view",
+            "total_ms": 176.9665
+          }
+        ]
+      },
+      {
+        "wall_ms": 255.43312499999956,
+        "profiles": [
+          {
+            "build_features": "gzip=true,http2=true",
+            "cache_read_ms": 0.002666,
+            "cache_resolve_ms": 0.0005,
+            "client_build_ms": 0.038125,
+            "request_build_ms": 0.005334,
+            "headers_ms": 180.22475,
+            "status": 200,
+            "http_version": "HTTP/2.0",
+            "content_encoding": "identity-or-decoded",
+            "remote_addr": "104.16.8.34:443",
+            "policy_ms": 0.037666,
+            "body_ms": 35.349042,
+            "decoded_body_bytes": 6311465,
+            "utf8_ms": 1.639625,
+            "json_parse_ms": 27.498542,
+            "resolve_ms": 0.403541,
+            "cache_write_ms": 0.000667,
+            "json_tree_drop_ms": 4.893,
+            "source": "network",
+            "section": "registry",
+            "total_ms": 250.108916
+          },
+          {
+            "prepare_ms": 0.012792,
+            "registry_ms": 250.184833,
+            "render_ms": 0.113,
+            "section": "view",
+            "total_ms": 250.32825
+          }
+        ]
+      }
+    ]
+  }
+}
