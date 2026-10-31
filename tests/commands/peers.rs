@@ -22,8 +22,8 @@ fn required_peers_are_siblings_optional_peers_are_not_auto_installed() {
             .iter()
             .all(|r| !r.contains("optional-host"))
     );
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
-    assert!(lock.contains("\"peer\": true"));
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
+    assert!(lock.contains("\"peer\":true"));
     f.ok(&["ls", "--all"]);
     f.ok(&["ci", "--ignore-scripts"]);
     f.ok(&["prune", "--omit=dev"]);
@@ -253,7 +253,7 @@ fn ci_rejects_peers_nested_under_their_consumer_before_removal() {
     f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
     f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);
     f.ok(&["install", "--ignore-scripts"]);
-    let path = f.root.join("package-lock.json");
+    let path = f.root.join("tnpm-lock.json");
     let lock = fs::read_to_string(&path).unwrap().replace(
         "\"node_modules/host\"",
         "\"node_modules/plugin/node_modules/host\"",
@@ -303,14 +303,14 @@ fn omit_peer_excludes_only_peer_only_packages_and_does_not_change_the_lock() {
         r#"{"dependencies":{"plugin":"1","shared":"1"}}"#,
     );
     f.ok(&["install", "--ignore-scripts"]);
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
     f.ok(&["ci", "--omit=peer", "--ignore-scripts"]);
     assert!(!f.root.join("node_modules/host").exists());
     assert!(!f.root.join("node_modules/peer-child").exists());
     assert!(f.root.join("node_modules/plugin/package.json").is_file());
     assert!(f.root.join("node_modules/shared/package.json").is_file());
     assert_eq!(
-        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap(),
         lock
     );
 }

@@ -146,9 +146,10 @@ fn version_updates_manifest_and_lockfiles_without_losing_custom_fields() {
         "package.json",
         r#"{"name":"fixture","version":"1.2.3","custom":{"keep":true}}"#,
     );
-    for name in ["package-lock.json", "npm-shrinkwrap.json"] {
+    for name in ["package-lock.json", "npm-shrinkwrap.json", "tnpm-lock.json"] {
         f.file(name, r#"{"name":"fixture","version":"1.2.3","lockfileVersion":3,"packages":{"":{"version":"1.2.3"},"node_modules/app":{"version":"9.0.0"}}}"#);
     }
+    f.file("npm-shrinkwrap.json", "not valid json");
 
     assert_eq!(
         f.ok(&["version", "patch", "--no-git-tag-version", "--json"]),
@@ -157,11 +158,15 @@ fn version_updates_manifest_and_lockfiles_without_losing_custom_fields() {
     let manifest = fs::read_to_string(f.root.join("package.json")).unwrap();
     assert!(manifest.contains("\"version\": \"1.2.4\""));
     assert!(manifest.contains("\"keep\": true"));
-    for name in ["package-lock.json", "npm-shrinkwrap.json"] {
-        let lock = fs::read_to_string(f.root.join(name)).unwrap();
-        assert_eq!(lock.matches("\"version\": \"1.2.4\"").count(), 2);
-        assert!(lock.contains("\"version\": \"9.0.0\""));
-    }
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
+    assert_eq!(lock.matches("\"version\": \"1.2.4\"").count(), 2);
+    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
+    assert!(lock.contains("1.2.3"));
+    assert!(!lock.contains("1.2.4"));
+    assert_eq!(
+        fs::read_to_string(f.root.join("npm-shrinkwrap.json")).unwrap(),
+        "not valid json"
+    );
     assert!(f.ok(&["version", "--json"]).contains("1.2.4"));
     assert!(f.requests.lock().unwrap().is_empty());
 }

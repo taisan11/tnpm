@@ -63,15 +63,25 @@ try {
     for (let round = -2; round < samples; round++) {
       for (const tool of round % 2 === 0 ? ['before', 'after'] : ['after', 'before']) {
         await writeFile(join(cwd, 'package-lock.json'), input); // Outside timing.
+        await rm(join(cwd, 'tnpm-lock.json'), { force: true });
         const start = process.hrtime.bigint();
         const output = await execute(binaries[tool], args, { cwd, env, timeout: 120_000 });
         const elapsed = Number(process.hrtime.bigint() - start);
         if (round >= 0) timings[tool].push(elapsed);
         assert.equal(JSON.parse(output.stdout)[values.mode === 'lock' ? 'locked' : 'installed'],
           values.mode === 'lock' ? size : 0);
-        const lock = JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'));
-        expected ??= lock;
-        assert.deepEqual(lock, expected, `${tool} changed graph/flags for size ${size}`);
+        let lock;
+        try { lock = JSON.parse(await readFile(join(cwd, 'tnpm-lock.json'), 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; lock = JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8')); }
+        if (lock.tnpmLockfileVersion === 1) {
+          lock.packages = Object.fromEntries(Object.entries(lock.packages).map(([path, entry]) => {
+            if (!path) return [path, entry];
+            const [version, resolved, integrity, extra] = entry;
+            return [path, { ...extra, ...(version === null ? {} : { version }), ...(resolved === null ? {} : { resolved }), ...(integrity === null ? {} : { integrity }) }];
+          }));
+        }
+        expected ??= lock.packages;
+        assert.deepEqual(lock.packages, expected, `${tool} changed graph/flags for size ${size}`);
         if (values.mode === 'noop') {
           const hidden = JSON.parse(await readFile(join(cwd, 'node_modules/.package-lock.json'), 'utf8'));
           const { '': ignored, ...installed } = lock.packages;

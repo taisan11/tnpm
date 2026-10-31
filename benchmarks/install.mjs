@@ -14,10 +14,10 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const { values } = parseArgs({ options: {
   samples: { type: 'string', default: '10' }, warmup: { type: 'string', default: '2' },
   ref: { type: 'string', default: 'main' }, tnpm: { type: 'string', default: join(directory, '../target/release/tnpm') },
-  output: { type: 'string', default: join(directory, 'results/install-cloudflare-workers') }, help: { type: 'boolean' },
+  output: { type: 'string', default: join(directory, 'results/install-tnpm-bun-scripts') }, help: { type: 'boolean' },
 } });
 if (values.help) {
-  console.log('node benchmarks/install.mjs [--samples=10] [--warmup=2] [--ref=COMMIT] [--tnpm=PATH] [--output=PREFIX]\nAll tools use warmed, isolated caches. Measured installs are offline and ignore scripts.');
+  console.log('node benchmarks/install.mjs [--samples=10] [--warmup=2] [--ref=COMMIT] [--tnpm=PATH] [--output=PREFIX]\nLifecycle scripts follow each tool’s policy. Warm cases are offline; the paired cold case uses the network.');
   process.exit(0);
 }
 if (process.platform === 'win32') throw new Error('This benchmark currently requires macOS/Linux for HOME isolation.');
@@ -39,20 +39,16 @@ try {
     assert.ok(installed.some(s => s.startsWith('hono@')) && installed.some(s => s.startsWith('wrangler@')));
     if (!expected) expected = installed;
     assert.deepEqual(installed, expected, `${tool} installed a different package/version multiset`);
-    // Import the actual library, not just its manifest. No lifecycle script or native CLI is executed.
+    // Import the actual library, not just its manifest; lifecycle scripts run during install.
     await execute(process.execPath, ['--input-type=module', '-e', 'import { Hono } from "hono"; if (typeof new Hono().fetch !== "function") process.exit(1)'],
       { cwd: fixture.projects[tool], env: fixture.environments[tool] });
   };
   const cases = [
     { name: 'clean install / warm cache', clean: true },
-    { name: 'clean install / cold tnpm extracted cache', clean: true, coldTnpmExtracted: true },
     { name: 'clean install / cold Bun + tnpm caches', clean: true, coldInstallCaches: true },
     { name: 'no-op install / warm cache', clean: false },
   ];
   const prepare = async (tool, test) => {
-    if (test.coldTnpmExtracted && tool === 'tnpm') {
-      await rm(join(fixture.environments.tnpm.HOME, '.tnpm/cache/packages-v1'), { recursive: true, force: true });
-    }
     if (test.coldInstallCaches && tool === 'bun') {
       await rm(fixture.environments.bun.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
     }
@@ -86,7 +82,7 @@ try {
         await validate(tool); // Deliberately outside the measured interval.
       }
     }
-    const tools = Object.fromEntries(TOOLS.map(tool => [tool, { args: installArgs(tool, true), ...summarize(timings[tool]) }]));
+    const tools = Object.fromEntries(TOOLS.map(tool => [tool, { args: installArgs(tool, !(test.coldInstallCaches && ['bun', 'tnpm'].includes(tool))), ...summarize(timings[tool]) }]));
     results.push({ name: test.name, tools });
     for (const tool of TOOLS) console.log(`  ${tool}: avg ${(tools[tool].avg / 1e6).toFixed(3)} ms; p50 ${(tools[tool].p50 / 1e6).toFixed(3)} ms`);
   }
@@ -95,10 +91,10 @@ try {
     canonicalLock: fixture.lock, installedPackages: expected, samples, warmup, concurrency: 1, unit: 'ns',
     cpu: cpus()[0]?.model, platform: process.platform, arch: process.arch, osRelease: release(), node: process.version, versions,
     tnpmBinary: binaries.tnpm, tnpmBinarySha256: createHash('sha256').update(await readFile(binaries.tnpm)).digest('hex'),
-    scripts: 'disabled for all tools', network: 'measurement is offline except the paired cold Bun/tnpm cache case; requests not externally counted',
+    scripts: 'enabled under each tool’s default policy; Bun blocks untrusted dependency scripts', network: 'measurement is offline except the paired cold Bun/tnpm cache case; requests not externally counted',
     timing: 'fresh subprocess wall time including startup and output draining; cleanup, validation, setup and warmup excluded',
-    cache: 'separate temporary HOME and package cache per tool; cold tnpm extracted case retains tarballs; paired cold Bun/tnpm case clears both install caches and allows network; OS file cache warm',
-    lockfiles: 'one npm-generated v3 graph shared by all tools; Bun imports to its native lock during warmup; lockfiles retained' };
+    cache: 'separate temporary HOME and package cache per tool; paired cold Bun/tnpm case clears both install caches and allows network; OS file cache warm',
+    lockfiles: 'one npm-generated v3 graph shared by both tools; Bun and tnpm import it to native locks during warmup; lockfiles retained' };
   const ms = ns => (ns / 1e6).toFixed(3);
   const markdown = [ '# Cloudflare Workers template — warm-cache install benchmark', '',
     `Measured: ${metadata.measuredAt}`, '', `- Template: ${SOURCE}`, `- Commit: \`${fixture.commit}\``,
@@ -106,18 +102,18 @@ try {
     `- ${TOOLS.map(tool => `${tool} ${versions[tool]}${tool === 'tnpm' ? ' (release)' : ''}`).join('; ')}`,
     `- ${samples} samples and ${warmup} warmups per CLI/case; concurrency 1; order rotated each round; no outlier removal.`,
     `- Identical installed package/version multisets validated: ${expected.length} packages. Native layouts may differ.`,
-    '- Each CLI has an isolated cache. The warm case uses --offline for measured installs; the paired cold Bun/tnpm case clears each install cache before invocation and allows registry access. HTTP is not externally counted.',
-    '- A single npm v3 dependency graph is shared. Bun imports it into its native lock during untimed warmup. Locks and caches remain in place.',
+    '- Each CLI has an isolated cache. The warm case uses --offline for measured installs; the paired cold Bun/tnpm case clears each install cache before invocation and allows registry access. Script network access is not restricted; HTTP is not externally counted.',
+    '- A single npm v3 dependency graph is shared. Bun and tnpm import it into their native locks during untimed warmup. Locks and caches remain in place.',
     '- Clean install: remove only node_modules before every invocation, outside timing. No-op: retain node_modules.',
-    '- Cold tnpm extracted case clears only its extracted package cache while retaining verified tarballs. The paired cold Bun/tnpm case clears both package and tarball caches; network transfer is included for both.',
+    '- The paired cold Bun/tnpm case clears both install caches; network transfer is included for both.',
     '- Setup, template fetching, cache warming, cleanup, package validation and Hono import checks are outside timing.',
     '- End-to-end subprocess time includes startup and stdout/stderr draining. OS file caches are warm.', '',
     '| Case | Tool | Mean (ms) | p50 (ms) | p99 (ms) | Min (ms) | Max (ms) |',
     '| --- | --- | ---: | ---: | ---: | ---: | ---: |',
     ...results.flatMap(row => TOOLS.map(tool => { const t = row.tools[tool]; return `| ${row.name} | ${tool} | ${[t.avg, t.p50, t.p99, t.min, t.max].map(ms).join(' | ')} |`; })), '',
-    '## Commands', '', ...TOOLS.map(tool => `- \`${tool} ${installArgs(tool, true).join(' ')}\``), '',
+    '## Commands', '', ...results.flatMap(row => TOOLS.map(tool => `- ${row.name}: \`${tool} ${row.tools[tool].args.join(' ')}\``)), '',
     '## Caveats', '', '- Bun and tnpm both reuse extracted package caches, but cache formats, validation, and clone/link implementations differ; these are real implementation differences, not identical I/O strategies.',
-    '- Lifecycle/native postinstall work is excluded uniformly. These timings do not measure a fully built Wrangler runtime.',
+    '- Lifecycle scripts follow each tool’s default policy. Bun runs dependency scripts only for trusted packages, so the work performed is not guaranteed to be identical.',
     '- The source manifest is unchanged. The resolved graph, source commit, raw samples and binary checksum are saved in the JSON report.',
     '- This is one machine/run, not a claim of complete npm compatibility or cold-cache/network performance.', '' ].join('\n');
   const output = resolve(values.output);

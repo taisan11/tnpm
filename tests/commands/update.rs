@@ -125,7 +125,7 @@ fn update_latest_targets_packages_and_respects_no_save_lock_only_and_exact() {
     let original = r#"{"dependencies":{"chosen":"^1.0.0","untouched":"^1.0.0"}}"#;
     f.file("package.json", original);
     f.ok(&["install", "--package-lock-only"]);
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
     f.ok(&[
         "update",
         "chosen",
@@ -138,7 +138,7 @@ fn update_latest_targets_packages_and_respects_no_save_lock_only_and_exact() {
         original
     );
     assert_eq!(
-        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap(),
         lock
     );
     assert!(!f.root.join("node_modules").exists());
@@ -198,7 +198,7 @@ fn update_latest_warns_by_default_and_strict_conflicts_do_not_mutate() {
     f.file("package.json", original);
     f.ok(&["install", "--ignore-scripts"]);
     f.file("node_modules/.sentinel", "keep");
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
     let output = f.invoke(&[
         "update",
         "--latest",
@@ -212,7 +212,7 @@ fn update_latest_warns_by_default_and_strict_conflicts_do_not_mutate() {
         original
     );
     assert_eq!(
-        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap(),
         lock
     );
     assert!(f.root.join("node_modules/.sentinel").is_file());

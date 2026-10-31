@@ -1,4 +1,4 @@
-# npm / tnpm / Bun の CLI ベンチマーク
+# tnpm / Bun の CLI ベンチマーク
 
 既存の CLI 参照系は Mitata 1.0.34 の `measure()`、install は削除・検証を計測外に分離するため `hrtime.bigint()` で、毎回新しい CLI プロセスを起動して実行時間を測ります。
 Rust の実行時依存は追加しません。Mitata はこのディレクトリだけの開発依存です。
@@ -40,7 +40,7 @@ node benchmarks/bench.mjs
 ```sh
 node benchmarks/bench.mjs --samples=50
 node benchmarks/bench.mjs --tools=tnpm,bun
-node benchmarks/bench.mjs --tools=npm,tnpm --output=benchmarks/results/npm-tnpm
+node benchmarks/bench.mjs --tools=tnpm --output=benchmarks/results/tnpm-only
 node benchmarks/bench.mjs --filter='warm cache' --output=benchmarks/results/cache
 node benchmarks/bench.mjs --tnpm=/absolute/path/to/tnpm
 node --test benchmarks/tests/*.test.mjs
@@ -59,19 +59,18 @@ node --test benchmarks/tests/install-fixture.test.mjs
 ```
 
 - 対象は [honojs/starter の cloudflare-workers](https://github.com/honojs/starter/tree/main/templates/cloudflare-workers)。`main` を1回コミット SHA に固定してテンプレート全ファイルを取得し、Git blob checksum を検証します。元の `package.json` は変更しません。
-- npm で v3 lockfile を一度作り、同じ依存グラフを3者に渡します。Bun の native lockfile への変換は warmup 中です。各 CLI の lockfile は以後保持します。
-- HOME / キャッシュ / npmrc を3者で分離し、各 CLI・各ケースで2回以上 warmup。通常ケースは初回のみ公開レジストリへの通信を許し、計測は **全 CLI に `--offline`** を指定します。cold Bun + tnpm ケースは両方のキャッシュ削除後に毎回レジストリへ接続します。HTTP 回数は外部計測していません。
+- npm で v3 lockfile を一度作り、同じ依存グラフを両者に渡します。npm は準備にのみ使い、計測しません。Bun と tnpm の native lockfile への変換は warmup 中です。各 CLI の lockfile は以後保持します。
+- HOME / キャッシュ / npmrc を両者で分離し、各 CLI・各ケースで2回以上 warmup。通常ケースは初回のみ公開レジストリへの通信を許し、計測は **両 CLI に `--offline`** を指定します。ただし lifecycle script の通信は制限していません。cold Bun + tnpm ケースは両方のキャッシュ削除後に毎回レジストリへ接続します。HTTP 回数は外部計測していません。
 - `clean install / warm cache`: 各回 `node_modules` だけを削除し再構築します。削除時間は計測外です。
-- `clean install / cold tnpm extracted cache`: 各 tnpm 実行の前に展開済みパッケージキャッシュだけを削除し、検証済み tarball キャッシュは残します。初回展開・キャッシュ生成のコストを分離して測ります。
-- `clean install / cold Bun + tnpm caches`: 各 Bun / tnpm 実行の前に両者の install cache 全体を削除して、レジストリから再取得します。Bun と tnpm の cold install を同じ条件で比較します。通信時間を含むため、offline の tnpm cold-extracted 条件とは直接比較できません。
+- `clean install / cold Bun + tnpm caches`: 各 Bun / tnpm 実行の前に両者の install cache 全体を削除して、レジストリから再取得します。Bun と tnpm の cold install を同じ条件で比較します。通信時間を含みます。
 - `no-op install / warm cache`: `node_modules` も残して通常の install を実行します。再構築と同じケースに混ぜません。
-- 全 CLI で `--ignore-scripts`、npm の audit / fund は無効。パッケージマネージャー自体の処理を比べ、Wrangler のネイティブ postinstall / ビルド性能は比べません。
+- `--ignore-scripts` は指定せず、各 CLI の既定ポリシーで lifecycle script を実行します。Bun は信頼された依存のスクリプトのみを実行するため、両者で実行されるスクリプトが同じとは限りません。
 - 既定10サンプル、並列数1、ラウンドごとに実行順をローテーション。`hrtime.bigint()` による subprocess wall-clock で、起動と出力読み取りを含みます。setup / warmup / 削除 / 検証は含みません。較正呼び出しや外れ値除外はありません。
-- 毎回、インストール済み name/version の multiset が3者で一致すること、manifest が変わらないこと、Hono を実際に import できることを計測外で検証します。
+- 毎回、インストール済み name/version の multiset が両者で一致すること、manifest が変わらないこと、Hono を実際に import できることを計測外で検証します。
 - Bun と tnpm は展開済みキャッシュを利用しますが、キャッシュ形式・検証・clone/link の実装は異なります。OS のファイルキャッシュも warm です。
-- 結果は `results/install-cloudflare-workers.md` / `.json`。取得コミット・manifest・共通 lockfile・実行コマンド・ツールのバージョン・tnpm バイナリの checksum・全サンプルを保存します。`--output=PREFIX` で別名に保存できます。
+- 結果は `results/install-tnpm-bun-scripts.md` / `.json`。取得コミット・manifest・共通 lockfile・実行コマンド・ツールのバージョン・tnpm バイナリの checksum・全サンプルを保存します。`--output=PREFIX` で別名に保存できます。
 
-[実測結果](results/install-cloudflare-workers.md)
+[過去のスクリプト無効時の実測結果](results/install-cloudflare-workers.md)
 
 ## 依存グラフのデータ配置を変更前後で比較（完全ローカル）
 
@@ -111,7 +110,7 @@ node benchmarks/cache.mjs --before=BASELINE_BINARY --sizes=300,3000 --samples=15
 ## `hono` を実ネットワークで測定
 
 ```sh
-# 公開 npm レジストリへの実際の HTTPS 通信（3者比較、既定5サンプル）
+# 公開 npm レジストリへの実際の HTTPS 通信（2者比較、既定5サンプル）
 node benchmarks/bench.mjs --live
 
 # Bun / tnpm のみ・毎回取得するケースだけに絞る
@@ -124,13 +123,13 @@ node benchmarks/bench.mjs --live --samples=10 --output=benchmarks/results/hono-1
 - 接続先は `https://registry.npmjs.org/`、対象は実在する `hono` です。測定器側でローカルサーバーや中継プロキシは設けません。OS のシステムプロキシがある場合は各 CLI の動作に従います。
 - 測定前に選択した最初の CLI で最新バージョンを1回取得し、全 CLI の測定対象を同じ `hono@<version>` に固定します。実際のバージョンと解決に使った CLI を結果に記録します。
 - バージョン取得・JSON 表示・整形表示のそれぞれを、通常実行と毎回取得で比較します。通常実行はウォームアップ後のキャッシュを使う可能性があります。
-- 毎回取得は npm `--prefer-online`、tnpm / Bun `--no-cache` を指定します。npm は HTTP 304 による再検証やキャッシュ書き込みを行う場合があり、全 CLI の転送内容・圧縮方式は同一とは限りません。
+- 毎回取得は tnpm / Bun とも `--no-cache` を指定します。両 CLI の転送内容・圧縮方式は同一とは限りません。
 - TLS、DNS、CDN、ネットワークの変動、プロセス起動時間を含む測定です。ツールごとの HTTP 回数やキャッシュヒットは直接観測していないため **N/A（不明）** と記録します。0件とみなしたり、無通信を保証したりしません。
 - 無通信を検証できない warm-cache 専用ケースと、合成依存の一覧などローカル専用ケースは実行しません。`hono` 本体のインストールやスクリプト実行もしません。
 - 個人の npmrc・認証情報・プロキシ環境変数は引き継がず、ツールごとに一時 HOME / キャッシュを作成して終了時に削除します。OS のシステムプロキシは reqwest の既定動作に従います。
 - リクエスト数を抑えるため、実ネットワークモードの既定は5サンプルです。別途、各ケースのウォームアップ2回と Mitata の較正呼び出しも発生します。
 
-結果は **`results/live-hono.md` / `results/live-hono.json`** に保存します。既存のローカル測定結果は上書きしません。
+結果は **`results/live-tnpm-bun.md` / `results/live-tnpm-bun.json`** に保存します。既存のローカル測定結果は上書きしません。
 
 ## 通信・解析時間の切り分け
 
@@ -161,7 +160,7 @@ node benchmarks/profile-network.mjs --transport=gzip --label=gzip --output=bench
 
 ## 測定対象
 
-| 用途 | npm / tnpm | Bun |
+| 用途 | tnpm | Bun |
 | --- | --- | --- |
 | 直接依存の一覧（テキスト） | `ls` | `bun pm ls` |
 | 全依存の一覧（テキスト） | `ls --all` | `bun pm ls --all` |
@@ -177,7 +176,7 @@ node benchmarks/profile-network.mjs --transport=gzip --label=gzip --output=bench
 
 ## 条件
 
-- macOS / Linux、Node.js 20 以降。npm / Bun は PATH 上、tnpm は `target/release/tnpm` を使用。既定は3者比較、`--tools` で測定対象を選べます。
+- macOS / Linux、Node.js 20 以降。Bun は PATH 上、tnpm は `target/release/tnpm` を使用。既定は2者比較、`--tools` で測定対象を選べます。install ベンチの準備には npm も必要です。
 - ローカルは既定30サンプル、実ネットワークは既定5サンプル・並列数1。極端な値の除外や複数呼び出しのバッチ化はしません。
 - 各ケースで実行順をローテーションし、出力内容の検証と2回のウォームアップを測定前に行います。
 - プロセス起動、CLI 処理、stdout/stderr の読み取りを含む wall-clock 時間。ビルド・fixture 作成・ウォームアップは含みません。
@@ -185,13 +184,13 @@ node benchmarks/profile-network.mjs --transport=gzip --label=gzip --output=bench
 - ローカルモードのレジストリは loopback の HTTP サーバー。`--live` を付けない限り公開 npm レジストリには接続せず、TLS・インターネット遅延は含まれません。
 - HOME、npm cache、Bun cache、npmrc、XDG 設定をツールごとの一時ディレクトリに分離。ユーザーの `BUN_*` も引き継ぎません。レジストリ URL にツール別パスを設け、User-Agent に依存せず HTTP 回数を計測します。既存のキャッシュ・トークン・設定は変更せず、終了時は今回作成した fixture だけ削除します。
 - ローカルモードでは全ツール共通の fixture に npm lockfile を作成。Bun を選ぶ場合は測定前に `bun pm migrate` で `bun.lock` を生成し、通信が発生しないことを検証します。
-- Bun の一覧は `bun.lock` ベース、npm / tnpm はインストール済み依存を検査します。全く同じ内部処理ではないため、差を parser 単体の速度として解釈しないでください。テキスト一覧の検証では直接20 / 全100パッケージが出力されることを確認します。
-- warm cache は npm / Bun `--prefer-offline`、tnpm は通常キャッシュ。HTTP リクエストが0件であることを検証します。Bun は2回目のウォームアップでも通信した場合、同条件で比較できないため理由を付けて N/A にします。Bun 1.4.4 の `info` ではこの挙動を確認しました（共有 help にフラグが載っていても、実際に無通信とは限りません）。
-- 毎回通信は npm `--prefer-online` / tnpm・Bun `--no-cache`。HTTP 200 の全データを毎回取得することを検証します。npm はキャッシュを書き込む場合がありますが、tnpm は読み書きをしません。
+- Bun の一覧は `bun.lock` ベース、tnpm はインストール済み依存を検査します。全く同じ内部処理ではないため、差を parser 単体の速度として解釈しないでください。テキスト一覧の検証では直接20 / 全100パッケージが出力されることを確認します。
+- warm cache は Bun `--prefer-offline`、tnpm は通常キャッシュ。HTTP リクエストが0件であることを検証します。Bun は2回目のウォームアップでも通信した場合、同条件で比較できないため理由を付けて N/A にします。
+- 毎回通信は tnpm・Bun とも `--no-cache`。HTTP 200 の全データを毎回取得することを検証します。
 - 通常動作の `view` は HTTP 回数を併記し、異なるキャッシュポリシーを同じ条件と誤認しないようにします。
-- OS のファイルキャッシュは warm。npm / tnpm で実装範囲・出力は同一ではありません。特に `fund`・`version` は処理量が異なるため、完全互換の性能比較ではありません。
+- OS のファイルキャッシュは warm。tnpm と Bun で実装範囲・出力は同一ではなく、完全互換の性能比較ではありません。
 
-ローカルの結果は `results/with-bun.md` と `results/with-bun.json`（サンプル時間は ns）に保存します。実ネットワークは `results/live-hono.*` に分離し、既存の `results/latest.*` は上書きしません。
+ローカルの結果は `results/tnpm-bun.md` と `results/tnpm-bun.json`（サンプル時間は ns）に保存します。実ネットワークは `results/live-tnpm-bun.*` に分離し、過去の結果は上書きしません。
 平均・p50・p99・実際のコマンド・通信回数・対象外の理由を記録します。倍率は「他ツールの時間 / tnpm の時間」で、1未満なら他ツールの方が速いことを意味します。
-過去の npm / tnpm の結果と今回の結果は別実行です。旧 fixture には lockfile がないため、古い数値を3者同時測定の結果として合成しないでください。
+過去の npm / tnpm の結果は履歴として保持し、今回の2者比較と混ぜません。
 エラー終了した CLI は計測成功とみなさず、その時点で中断します。

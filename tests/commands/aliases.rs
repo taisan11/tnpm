@@ -79,16 +79,16 @@ fn npm_aliases_use_target_scoped_registry_for_outdated_install_update_and_ci() {
         fs::read_to_string(f.root.join("package.json")).unwrap(),
         manifest
     );
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
-    assert!(lock.contains(&format!("\"name\": \"{target}\"")));
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
+    assert!(lock.contains(&format!("\"name\":\"{target}\"")));
     assert!(f.ok(&["ls", "--json"]).contains(alias));
 
     f.file("node_modules/sentinel", "keep");
     f.file(
-        "package-lock.json",
+        "tnpm-lock.json",
         &lock.replace(
-            &format!("\"name\": \"{target}\""),
-            "\"name\": \"wrong-target\"",
+            &format!("\"name\":\"{target}\""),
+            "\"name\":\"wrong-target\"",
         ),
     );
     let output = invoke(&["ci", "--ignore-scripts"]);

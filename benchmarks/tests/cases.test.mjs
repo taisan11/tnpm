@@ -5,8 +5,8 @@ import { buildCases, parseTools } from '../lib/cases.mjs';
 
 test('tool selection rejects unknown names and duplicates', () => {
   assert.deepEqual(parseTools('tnpm,bun'), ['tnpm', 'bun']);
-  assert.deepEqual(parseTools(' npm, tnpm,bun '), ['npm', 'tnpm', 'bun']);
-  for (const value of ['', 'npm,', 'npm,npm', 'pnpm']) assert.throws(() => parseTools(value));
+  assert.deepEqual(parseTools(' tnpm,bun '), ['tnpm', 'bun']);
+  for (const value of ['', 'tnpm,', 'tnpm,tnpm', 'npm', 'pnpm']) assert.throws(() => parseTools(value));
 });
 
 test('Bun mappings use actual equivalents and never substitute npm wrappers', () => {

@@ -51,8 +51,8 @@ const server = createServer((request, response) => {
 });
 try {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  const home = { before: fixture.homes.npm, after: fixture.homes.tnpm };
-  const envs = { before: fixture.environments.npm, after: fixture.environments.tnpm };
+  const home = { before: fixture.homes.bun, after: fixture.homes.tnpm };
+  const envs = { before: fixture.environments.bun, after: fixture.environments.tnpm };
   const results = [];
   for (const size of sizes) {
     const latest = `1.0.${size - 1}`;

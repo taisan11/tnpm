@@ -2,11 +2,11 @@
 export async function resolveLiveTarget(invoke, tool, fixture) {
   const name = 'hono';
   const args = [tool === 'bun' ? 'info' : 'view', name, 'version', '--registry', fixture.registries[tool]];
-  args.push(tool === 'npm' ? '--prefer-online' : '--no-cache');
+  args.push('--no-cache');
   if (tool === 'bun') args.push('--cache-dir', fixture.environments.bun.BUN_INSTALL_CACHE_DIR);
   const { stdout } = await invoke(tool, args);
   let version = stdout.toString().trim();
-  // Accept plain output, a JSON scalar, and npm's single-element array form.
+  // Accept plain output, a JSON scalar, or a single-element array.
   try {
     const value = JSON.parse(version);
     version = Array.isArray(value) && value.length === 1 ? value[0] : value;

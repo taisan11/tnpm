@@ -1,6 +1,7 @@
-//! npm v3 lockfiles describe physical package locations, not a nested logical tree.
-use crate::{fs::write_json, json::Value, spec};
+//! Lockfiles describe physical package locations, not a nested logical tree.
+use crate::{fs::write_text, json::Value, spec};
 use anyhow::{Context, Result, bail};
+use nojson::{DisplayJson, JsonFormatter};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -152,32 +153,142 @@ pub struct Lockfile {
     pub packages: BTreeMap<String, Value>,
 }
 
+struct CompactEntry<'a>(&'a Value);
+struct ExtraFields<'a>(&'a Value);
+
+impl DisplayJson for ExtraFields<'_> {
+    fn fmt(&self, f: &mut JsonFormatter<'_, '_>) -> std::fmt::Result {
+        f.object(|f| {
+            for (key, value) in self.0.members() {
+                if ["version", "resolved", "integrity"].contains(&key.as_str())
+                    && matches!(value, Value::String(_))
+                {
+                    continue;
+                }
+                f.member(key, value)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl DisplayJson for CompactEntry<'_> {
+    fn fmt(&self, f: &mut JsonFormatter<'_, '_>) -> std::fmt::Result {
+        let indent = f.get_indent_size();
+        let spacing = f.get_spacing();
+        f.set_indent_size(0);
+        f.set_spacing(false);
+        let result = f.array(|f| {
+            for key in ["version", "resolved", "integrity"] {
+                f.element(
+                    self.0
+                        .get(key)
+                        .filter(|v| matches!(v, Value::String(_)))
+                        .unwrap_or(&Value::Null),
+                )?;
+            }
+            f.element(ExtraFields(self.0))
+        });
+        f.set_indent_size(indent);
+        f.set_spacing(spacing);
+        result
+    }
+}
+
+struct PackageEntries<'a>(&'a BTreeMap<String, Value>);
+impl DisplayJson for PackageEntries<'_> {
+    fn fmt(&self, f: &mut JsonFormatter<'_, '_>) -> std::fmt::Result {
+        f.object(|f| {
+            for (path, entry) in self.0 {
+                if path.is_empty() {
+                    f.member(path, entry)?;
+                } else {
+                    f.member(path, CompactEntry(entry))?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+fn exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("could not inspect {}", path.display())),
+    }
+}
+
 impl Lockfile {
     pub fn read(root: &Path) -> Result<Option<Self>> {
-        let path = root.join("package-lock.json");
+        let native = root.join("tnpm-lock.json");
+        let native_exists = exists(&native)?;
+        let npm = root.join("package-lock.json");
+        let npm_exists = !native_exists && exists(&npm)?;
+        if !native_exists && !npm_exists {
+            return Ok(None);
+        }
+        let path = if native_exists { native } else { npm };
         let text = match fs::read_to_string(&path) {
             Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
         };
         let value =
             Value::parse(&text).with_context(|| format!("could not parse {}", path.display()))?;
-        if !matches!(value.get("lockfileVersion"), Some(Value::Number(v)) if v == "3" || v == "2") {
-            bail!("only package-lock.json lockfileVersion 2/3 is supported");
+        if !native_exists {
+            if !matches!(value.get("lockfileVersion"), Some(Value::Number(v)) if v == "3" || v == "2")
+            {
+                bail!("only package-lock.json lockfileVersion 2/3 is supported");
+            }
+        } else if !matches!(value.get("tnpmLockfileVersion"), Some(Value::Number(v)) if v == "1") {
+            bail!("only tnpm-lock.json tnpmLockfileVersion 1 is supported");
         }
-        let entries = value
-            .get("packages")
-            .filter(|v| matches!(v, Value::Object(_)))
-            .context("lockfile has no packages object")?;
+        let Value::Object(fields) = value else {
+            bail!("lockfile must be an object")
+        };
+        let Some(Value::Object(entries)) = fields
+            .into_iter()
+            .find_map(|(k, v)| (k == "packages").then_some(v))
+        else {
+            bail!("lockfile has no packages object")
+        };
         let mut packages = BTreeMap::new();
-        for (path, entry) in entries.members() {
-            if (!path.is_empty() && !valid_location(path)) || !matches!(entry, Value::Object(_)) {
+        for (path, mut entry) in entries {
+            if native_exists && !path.is_empty() {
+                let Value::Array(parts) = entry else {
+                    bail!("invalid compact package: {path}")
+                };
+                let [version, resolved, integrity, extra]: [Value; 4] = parts
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid compact package: {path}"))?;
+                let Value::Object(mut fields) = extra else {
+                    bail!("invalid compact package: {path}")
+                };
+                for (key, value) in [
+                    ("version", version),
+                    ("resolved", resolved),
+                    ("integrity", integrity),
+                ] {
+                    if value != Value::Null {
+                        if !matches!(value, Value::String(_))
+                            || fields.iter().any(|(k, _)| k == key)
+                        {
+                            bail!("invalid compact field {key}: {path}");
+                        }
+                        fields.push((key.into(), value));
+                    }
+                }
+                entry = Value::Object(fields);
+            }
+            if (!path.is_empty() && !valid_location(&path)) || !matches!(entry, Value::Object(_)) {
                 bail!("invalid lockfile package location: {path}");
             }
             if entry.get("link") == Some(&Value::Bool(true)) {
                 bail!("link/workspace dependencies are not yet supported: {path}");
             }
-            packages.insert(path.clone(), entry.clone());
+            if packages.insert(path.clone(), entry).is_some() {
+                bail!("duplicate lockfile package location: {path}");
+            }
         }
         Ok(Some(Self { packages }))
     }
@@ -200,10 +311,21 @@ impl Lockfile {
     }
 
     pub fn write(&self, root: &Path, manifest: &Value) -> Result<()> {
-        write_json(
-            &root.join("package-lock.json"),
-            &self.value(manifest, false),
-        )
+        let text = nojson::json(|f| {
+            f.set_indent_size(2);
+            f.set_spacing(true);
+            f.object(|f| {
+                for key in ["name", "version"] {
+                    if let Some(value) = manifest.get(key) {
+                        f.member(key, value)?;
+                    }
+                }
+                f.member("tnpmLockfileVersion", 1)?;
+                f.member("packages", PackageEntries(&self.packages))
+            })
+        })
+        .to_string();
+        write_text(&root.join("tnpm-lock.json"), &(text + "\n"))
     }
 
     pub fn resolve(&self, from: &str, name: &str) -> Option<String> {
@@ -296,7 +418,7 @@ impl Lockfile {
                     .collect()
             };
             if map(locked) != map(manifest) {
-                bail!("package.json and package-lock.json disagree on {field}; run install first");
+                bail!("package.json and lockfile disagree on {field}; run install first");
             }
         }
         self.reachable_with(manifest, true, policy)?;

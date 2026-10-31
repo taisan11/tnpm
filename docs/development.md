@@ -15,6 +15,12 @@ cargo test --all-targets
 
 `build.rs` がビルド時の短縮 Git HEAD を `TNPM_BUILD_COMMIT` として埋め込みます。コミットが存在しない場合や Git が使えない場合は `unknown` です。CLI はどのコマンドでも最後に `tnpm vVERSION(COMMIT)` を stderr に出します。[出力仕様](cli-output.md)も参照してください。
 
+## リリース
+
+`Cargo.toml` のバージョンと `Cargo.lock` を更新・コミットし、同じバージョンのタグ（例：`v0.1.1`）を push すると、GitHub Actions の Release がビルドと公開を行います。Actions から手動実行する場合も、実行対象に同じタグを選択してください。タグと Cargo のバージョンが一致しなければ公開しません。タグにはワークフロー自体を含めてください。既存リリースの上書きは行いません。
+
+GitHub Release には実行ファイルと `SHA256SUMS` が公開されます。対象は Linux GNU x86_64 / aarch64（glibc 2.35 以降）、macOS x86_64 / aarch64、Windows x86_64 MSVC です。必要な実行ファイルをダウンロードして `tnpm`（Windows は `tnpm.exe`）にリネームし、Unix では実行権限を付けて PATH に配置してください。各環境で `tnpm upgrade` が最新の安定版に更新します。プレリリースタグは GitHub の prerelease として公開し、通常の `upgrade` 対象にはしません。
+
 ## Rust テスト
 
 - 単体テストは対応するモジュールの `#[cfg(test)] mod tests` に置きます。

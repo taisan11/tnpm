@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Verify tag and package version
+        shell: python
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          import os, sys, tomllib
+          with open('Cargo.toml', 'rb') as f:
+              version = tomllib.load(f)['package']['version']
+          if os.environ['REF_TYPE'] != 'tag' or os.environ['REF_NAME'] != 'v' + version:
+              sys.exit('Run on a v<version> tag matching Cargo.toml')
+      - name: Test updater
+        run: cargo test --locked --bin tnpm commands::upgrade::tests
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Prepare binary
+        shell: python
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          import os, pathlib, shutil
+          target = os.environ['TARGET']
+          suffix = '.exe' if 'windows' in target else ''
+          pathlib.Path('release').mkdir()
+          shutil.copyfile(f'target/{target}/release/tnpm{suffix}', f'release/tnpm-{target}{suffix}')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnpm-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum tnpm-* > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          flags=(--verify-tag --generate-notes)
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/* "${flags[@]}"

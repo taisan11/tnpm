@@ -331,15 +331,20 @@ pub(super) async fn materialize(
     }
     // Clone cached packages or download/decompress concurrently, then commit parent-first.
     let stage = root.join(format!(".tnpm-stage-{}-{}", std::process::id(), unique()));
-    fs::create_dir(&stage)?;
+    if !jobs.is_empty() {
+        fs::create_dir(&stage)?;
+    }
     let result = async {
         let results: Vec<_> = stream::iter(jobs.iter().enumerate().map(|(i, path)| {
             let destination = stage.join(i.to_string());
             async move {
                 let entry = &lock.packages[path];
                 let result = async {
-                    let package_cache = package_cache_path(ctx, entry);
-                    if let Some(cached) = package_cache.as_deref().and_then(cached_package) {
+                    let package_cache = package_cache_path(ctx, entry, path);
+                    if let Some(cached) = package_cache
+                        .as_deref()
+                        .and_then(|cache| cached_package(cache, entry.str("integrity")))
+                    {
                         ctx.progress
                             .event("prepare", &format!("clone package cache {path}"));
                         let dest = destination.clone();
@@ -356,11 +361,13 @@ pub(super) async fn materialize(
                     ctx.progress.event("prepare", &format!("extract {path}"));
                     let dest = destination.clone();
                     let cache = package_cache.clone();
+                    let integrity = entry.str("integrity").map(str::to_owned);
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         fs::create_dir_all(&dest)?;
                         unpack(&bytes, &dest).context("could not unpack tarball")?;
                         if let Some(cache) = cache
-                            && let Err(error) = cache_extracted_package(&dest, &cache)
+                            && let Err(error) =
+                                cache_extracted_package(&dest, &cache, integrity.as_deref())
                         {
                             crate::progress::message(format_args!(
                                 "tnpm: could not cache extracted package: {error}"
@@ -500,7 +507,9 @@ pub(super) async fn materialize(
         Ok(())
     }
     .await;
-    let _ = fs::remove_dir_all(&stage);
+    if !jobs.is_empty() {
+        let _ = fs::remove_dir_all(&stage);
+    }
     result?;
     if ctx.options.command != "update" {
         summary(ctx.options, "installed", changed.len());
@@ -511,6 +520,23 @@ pub(super) async fn materialize(
 pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
     if ctx.options.lock_only {
         bail!("prune --package-lock-only is not supported");
+    }
+    if ctx.options.all {
+        if !ctx.options.arguments.is_empty() || ctx.options.omit.is_some() || ctx.options.production
+        {
+            bail!("prune --all cannot be combined with package names or --omit/--production");
+        }
+        let modules = root.join("node_modules");
+        let count = if fs::symlink_metadata(&modules)
+            .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        {
+            scan(root)?.packages.len()
+        } else {
+            0
+        };
+        remove_path(&modules)?;
+        summary(ctx.options, "removed", count);
+        return Ok(());
     }
     let manifest = manifest::read(root)?.context("package.json not found")?;
     let old = Lockfile::read(root)?;

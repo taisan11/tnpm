@@ -83,6 +83,10 @@ pub fn parse(mut args: noargs::RawArgs) -> noargs::Result<Option<Options>> {
             "List dependency funding URLs (does not open a browser)",
         ),
         ("version", "Print versions or bump the package version"),
+        (
+            "upgrade",
+            "Upgrade tnpm itself to the latest GitHub release",
+        ),
         ("view", "Read package metadata from a registry"),
         ("get", "Read npm configuration"),
         (
@@ -139,6 +143,13 @@ pub fn parse(mut args: noargs::RawArgs) -> noargs::Result<Option<Options>> {
     if options.command == "outdated" {
         options.plain = noargs::flag("plain")
             .doc("Print a borderless, uncolored table")
+            .take(&mut args)
+            .is_present();
+    }
+    if options.command == "prune" {
+        options.all = noargs::flag("all")
+            .short('a')
+            .doc("Remove the entire node_modules directory")
             .take(&mut args)
             .is_present();
     }
@@ -232,6 +243,11 @@ pub fn parse(mut args: noargs::RawArgs) -> noargs::Result<Option<Options>> {
     }
     if options.command == "version" && options.arguments.len() > 1 {
         return Err("version accepts at most one version or release type".into());
+    }
+    if options.command == "upgrade"
+        && (!options.arguments.is_empty() || !options.passthrough.is_empty())
+    {
+        return Err("upgrade does not accept arguments".into());
     }
     if options.command == "init" {
         options.arguments.append(&mut options.passthrough);

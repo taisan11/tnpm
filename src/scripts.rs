@@ -52,6 +52,7 @@ fn command_output(
     }
     paths.extend(root.ancestors().map(|p| p.join("node_modules/.bin")));
     paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let script = text;
     let text = if args.is_empty() {
         text.to_owned()
     } else {
@@ -76,6 +77,7 @@ fn command_output(
         .current_dir(root)
         .env("PATH", env::join_paths(paths)?)
         .env("npm_lifecycle_event", event)
+        .env("npm_lifecycle_script", script)
         .env("npm_package_json", root.join("package.json"))
         .env("npm_package_name", manifest.str("name").unwrap_or(""))
         .env("npm_package_version", manifest.str("version").unwrap_or(""))

@@ -10,6 +10,7 @@ mod manifest;
 mod profile;
 mod progress;
 mod registry;
+mod runner;
 mod scripts;
 mod semver;
 mod spec;
@@ -20,6 +21,15 @@ mod table;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> std::process::ExitCode {
+    if let Some(result) = runner::internal() {
+        return match result {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error:#}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     style::init();
     let result = app::run();
     progress::finish();

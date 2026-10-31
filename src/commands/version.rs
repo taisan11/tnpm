@@ -53,7 +53,7 @@ fn lifecycle(root: &Path, manifest: &Value, event: &str, version: &str) -> Resul
 
 fn update_files(root: &Path, version: &str) -> Result<()> {
     let mut updates = Vec::new();
-    for name in ["package.json", "package-lock.json", "npm-shrinkwrap.json"] {
+    for name in ["package.json", "tnpm-lock.json"] {
         let path = root.join(name);
         let old = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -161,10 +161,8 @@ pub fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
     }
     if do_git {
         let mut args = vec!["add", "--", "package.json"];
-        for name in ["package-lock.json", "npm-shrinkwrap.json"] {
-            if root.join(name).is_file() {
-                args.push(name);
-            }
+        if root.join("tnpm-lock.json").is_file() {
+            args.push("tnpm-lock.json");
         }
         git(root, &args)?;
         git(root, &["commit", "-m", &tag])?;

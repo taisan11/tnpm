@@ -19,8 +19,7 @@ export function templateFiles(tree) {
 }
 
 export function installArgs(tool, offline = false) {
-  return ['install', '--ignore-scripts', ...(tool === 'npm' ? ['--no-audit', '--no-fund'] : []),
-    ...(offline ? ['--offline'] : tool !== 'tnpm' ? ['--prefer-offline'] : [])];
+  return ['install', ...(offline ? ['--offline'] : tool === 'bun' ? ['--prefer-offline'] : [])];
 }
 
 export function isolatedEnvironment(home, inherited = process.env) {

@@ -3,6 +3,58 @@ use crate::support::Fixture;
 use std::fs;
 
 #[test]
+fn packages_without_integrity_never_reuse_extracted_cache() {
+    let f = Fixture::new();
+    f.package("app", "1.0.0", r#", "description":"first""#);
+    let first = f.routes.lock().unwrap()["/tar/app-1.0.0.tgz"].clone();
+    f.package("app", "1.0.0", r#", "description":"second""#);
+    let second = f.routes.lock().unwrap()["/tar/app-1.0.0.tgz"].clone();
+    f.routes.lock().unwrap().insert("/first.tgz".into(), first);
+    f.routes
+        .lock()
+        .unwrap()
+        .insert("/second.tgz".into(), second);
+    // A legacy cache entry without an integrity marker must not be trusted.
+    f.file("home/.tnpm/cache/packages-v2/app@1.0.0/.complete", "");
+    f.file(
+        "home/.tnpm/cache/packages-v2/app@1.0.0/package/package.json",
+        r#"{"name":"app","version":"1.0.0","description":"stale"}"#,
+    );
+    f.file("package.json", r#"{"dependencies":{"app":"1.0.0"}}"#);
+    let lock = |tarball: &str| {
+        format!(
+            r#"{{"lockfileVersion":3,"packages":{{"":{{"dependencies":{{"app":"1.0.0"}}}},"node_modules/app":{{"version":"1.0.0","resolved":"{}{tarball}"}}}}}}"#,
+            f.url
+        )
+    };
+    f.file("package-lock.json", &lock("first.tgz"));
+    f.ok(&["ci", "--ignore-scripts", "--no-save"]);
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/app/package.json"))
+            .unwrap()
+            .contains("first")
+    );
+    f.file("package-lock.json", &lock("second.tgz"));
+    f.ok(&["ci", "--ignore-scripts", "--no-save"]);
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/app/package.json"))
+            .unwrap()
+            .contains("second")
+    );
+    assert!(
+        f.requests
+            .lock()
+            .unwrap()
+            .contains(&"/second.tgz".to_owned())
+    );
+    assert!(
+        !f.invoke(&["ci", "--ignore-scripts", "--no-save", "--offline"])
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn install_lock_ci_bins_scripts_update_uninstall_and_prune() {
     let f = Fixture::new();
     let shared1 = f.package("shared", "1.0.0", "");
@@ -30,8 +82,8 @@ fn install_lock_ci_bins_scripts_update_uninstall_and_prune() {
     );
     assert!(f.root.join("node_modules/shared/package.json").is_file());
     assert!(f.root.join("node_modules/.bin/tool").is_file());
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
-    assert!(lock.contains("\"lockfileVersion\": 3"));
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
+    assert!(lock.contains("\"tnpmLockfileVersion\": 1"));
     let before = f.requests.lock().unwrap().len();
     f.ok(&["install", "--ignore-scripts"]);
     assert_eq!(
@@ -57,13 +109,13 @@ fn install_lock_ci_bins_scripts_update_uninstall_and_prune() {
     assert!(!f.root.join("node_modules/junk").exists());
     f.ok(&["ci", "--ignore-scripts"]);
     assert_eq!(
-        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap(),
         lock
     );
     assert_eq!(
         f.requests.lock().unwrap().len(),
         before,
-        "ci must reuse tarballs"
+        "ci must reuse extracted packages"
     );
     let newer = f.package(
         "app",
@@ -214,13 +266,13 @@ fn lock_only_and_no_save_do_not_modify_unrelated_state() {
         "explicit install should resolve metadata only once"
     );
     assert!(!f.root.join("node_modules").exists());
-    let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
+    let lock = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
     let manifest = fs::read_to_string(f.root.join("package.json")).unwrap();
     f.ok(&["install", "--ignore-scripts"]);
     f.ok(&["remove", "app", "--no-save", "--ignore-scripts"]);
     assert!(!f.root.join("node_modules/app").exists());
     assert_eq!(
-        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap(),
         lock
     );
     assert_eq!(
@@ -278,7 +330,7 @@ fn refuses_symlinked_node_modules_and_runs_dependency_hooks() {
 }
 
 #[test]
-fn offline_install_reuses_tarballs_and_never_falls_back_to_network() {
+fn offline_install_reuses_packages_and_never_falls_back_to_network() {
     let f = Fixture::new();
     f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
     f.single("host", "");
@@ -294,7 +346,165 @@ fn offline_install_reuses_tarballs_and_never_falls_back_to_network() {
     assert_eq!(f.requests.lock().unwrap().len(), warm);
     assert!(f.root.join("node_modules/host/package.json").is_file());
     fs::remove_dir_all(f.root.join("node_modules")).unwrap();
-    fs::remove_file(f.root.join("package-lock.json")).unwrap();
+    fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
     f.ok(&["install", "--offline", "--ignore-scripts"]);
     assert_eq!(f.requests.lock().unwrap().len(), warm);
+}
+
+#[test]
+fn prune_all_resets_only_node_modules_and_supports_both_flags() {
+    for flag in ["--all", "-a"] {
+        let f = Fixture::new();
+        f.single("app", "");
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        f.ok(&["install", "--ignore-scripts"]);
+        let manifest = fs::read(f.root.join("package.json")).unwrap();
+        let lock = fs::read(f.root.join("tnpm-lock.json")).unwrap();
+        let requests = f.requests.lock().unwrap().len();
+        assert!(
+            f.root
+                .join("home/.tnpm/cache/packages-v2/app@1.0.0/package")
+                .is_dir()
+        );
+        assert!(!f.root.join("home/.tnpm/cache/tarballs-v1").exists());
+        f.ok(&["prune", flag]);
+        assert!(!f.root.join("node_modules").exists());
+        assert_eq!(fs::read(f.root.join("package.json")).unwrap(), manifest);
+        assert_eq!(fs::read(f.root.join("tnpm-lock.json")).unwrap(), lock);
+        f.ok(&["install", "--offline", "--ignore-scripts"]);
+        assert_eq!(f.requests.lock().unwrap().len(), requests);
+        assert!(f.root.join("node_modules/app/package.json").is_file());
+    }
+}
+
+#[test]
+fn package_cache_rejects_different_integrity_and_missing_cache_offline() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    let cache = f.root.join("home/.tnpm/cache/packages-v2/app@1.0.0");
+    fs::write(cache.join(".complete"), "sha512-different").unwrap();
+    fs::remove_dir_all(f.root.join("node_modules")).unwrap();
+    let requests = f.requests.lock().unwrap().len();
+    let out = f.invoke(&["install", "--offline", "--ignore-scripts"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ENOTCACHED"));
+    assert_eq!(f.requests.lock().unwrap().len(), requests);
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(f.requests.lock().unwrap().len() > requests);
+}
+
+#[test]
+fn lockfile_migrates_npm_and_prefers_native() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file(
+        "package.json",
+        r#"{"name":"fixture","version":"1.0.0","dependencies":{"app":"1"}}"#,
+    );
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(f.root.join("tnpm-lock.json").is_file());
+    assert!(!f.root.join("package-lock.json").exists());
+    let hidden = fs::read_to_string(f.root.join("node_modules/.package-lock.json")).unwrap();
+    let npm = hidden.replace("\"packages\": {", "\"packages\": { \"\": {\"name\":\"fixture\",\"version\":\"1.0.0\",\"dependencies\":{\"app\":\"1\"}},");
+    f.file("package-lock.json", &npm);
+    fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+    f.ok(&["install", "--offline", "--ignore-scripts"]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        npm
+    );
+    assert!(f.root.join("tnpm-lock.json").is_file());
+    f.file("package-lock.json", "not json");
+    f.ok(&["ci", "--offline", "--ignore-scripts"]);
+    f.ok(&[
+        "version",
+        "patch",
+        "--no-git-tag-version",
+        "--ignore-scripts",
+    ]);
+    let native = fs::read_to_string(f.root.join("tnpm-lock.json")).unwrap();
+    assert!(native.contains("\"version\": \"1.0.1\""));
+    assert_eq!(
+        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        "not json"
+    );
+    f.file("package-lock.json", &npm);
+    f.file("tnpm-lock.json", "not json");
+    assert!(
+        !f.invoke(&["ci", "--offline", "--ignore-scripts"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn rejects_malformed_compact_locks_before_modifying_modules() {
+    for entry in [
+        r#"["1.0.0",null]"#,
+        r#"[1,null,null,{}]"#,
+        r#"["1.0.0",null,null,{"version":"9.0.0"}]"#,
+    ] {
+        let f = Fixture::new();
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        f.file("node_modules/sentinel", "keep");
+        f.file("tnpm-lock.json", &format!(r#"{{"tnpmLockfileVersion":1,"packages":{{"":{{"dependencies":{{"app":"1"}}}},"node_modules/app":{entry}}}}}"#));
+        assert!(
+            !f.invoke(&["ci", "--offline", "--ignore-scripts"])
+                .status
+                .success()
+        );
+        assert!(f.root.join("node_modules/sentinel").exists());
+    }
+}
+
+#[test]
+fn ci_imports_npm_lock_without_changing_it_or_shrinkwrap() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file(
+        "package.json",
+        r#"{"name":"fixture","dependencies":{"app":"1"}}"#,
+    );
+    f.ok(&["install", "--ignore-scripts"]);
+    let hidden = fs::read_to_string(f.root.join("node_modules/.package-lock.json")).unwrap();
+    let npm = hidden.replace(
+        "\"packages\": {",
+        "\"packages\": { \"\": {\"dependencies\":{\"app\":\"1\"}},",
+    );
+    f.file("package-lock.json", &npm);
+    f.file("npm-shrinkwrap.json", "not json");
+    fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+    f.ok(&["ci", "--offline", "--ignore-scripts", "--no-save"]);
+    assert!(!f.root.join("tnpm-lock.json").exists());
+    f.ok(&["ci", "--offline", "--ignore-scripts"]);
+    assert!(f.root.join("tnpm-lock.json").is_file());
+    assert_eq!(
+        fs::read_to_string(f.root.join("package-lock.json")).unwrap(),
+        npm
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join("npm-shrinkwrap.json")).unwrap(),
+        "not json"
+    );
+}
+
+#[test]
+fn obsolete_native_lock_encodings_are_rejected() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.file("node_modules/sentinel", "keep");
+    for lock in [
+        r#"{"tnpmLockfileVersion":1,"packages":{"":{"dependencies":{"app":"1"}},"node_modules/app":{"version":"1.0.0"}}}"#,
+        r#"{"tnpmLockfileVersion":2,"packages":{"":{"dependencies":{"app":"1"}},"node_modules/app":["1.0.0",null,null,{}]}}"#,
+    ] {
+        f.file("tnpm-lock.json", lock);
+        assert!(
+            !f.invoke(&["ci", "--offline", "--ignore-scripts"])
+                .status
+                .success()
+        );
+        assert!(f.root.join("node_modules/sentinel").exists());
+    }
 }

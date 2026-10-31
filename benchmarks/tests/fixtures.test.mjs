@@ -9,7 +9,6 @@ test('fixture creates isolated homes, dependencies and a counted local registry'
   try {
     const root = JSON.parse(await readFile(join(fixture.cwd, 'package.json'), 'utf8'));
     assert.equal(Object.keys(root.dependencies).length, 20);
-    assert.notEqual(fixture.environments.npm.HOME, fixture.environments.tnpm.HOME);
     assert.notEqual(fixture.environments.bun.HOME, fixture.environments.tnpm.HOME);
     assert.ok(fixture.environments.bun.BUN_INSTALL_CACHE_DIR.startsWith(fixture.homes.bun));
     assert.equal(Object.keys(JSON.parse(await readFile(join(fixture.cwd, 'package-lock.json'), 'utf8')).packages).length, 101);
@@ -24,7 +23,7 @@ test('fixture creates isolated homes, dependencies and a counted local registry'
     const missing = await fetch(`${fixture.registry}missing`);
     assert.equal(missing.status, 404);
     await missing.arrayBuffer();
-    assert.equal(fixture.requests.npm, 1);
+    assert.equal(fixture.requests.tnpm, 2);
     const before = { ...fixture.requests };
     const bun = await fetch(`${fixture.registries.bun}${encodeURIComponent(PACKAGE)}`, { headers: { 'User-Agent': 'npm/test' } });
     assert.equal(bun.status, 200);

@@ -16,12 +16,12 @@ const { values } = parseArgs({ options: {
   live: { type: 'boolean', default: false },
   filter: { type: 'string', default: '' },
   tnpm: { type: 'string', default: join(directory, '../target/release/tnpm') },
-  tools: { type: 'string', default: 'npm,tnpm,bun' },
+  tools: { type: 'string', default: 'tnpm,bun' },
   output: { type: 'string' },
   help: { type: 'boolean', default: false },
 } });
 if (values.help) {
-  console.log('node bench.mjs [--live] [--tools=npm,tnpm,bun] [--samples=N] [--filter=REGEX] [--tnpm=PATH] [--output=PREFIX]\n--live: benchmark hono against https://registry.npmjs.org/ (default: 5 samples; local: 30)');
+  console.log('node bench.mjs [--live] [--tools=tnpm,bun] [--samples=N] [--filter=REGEX] [--tnpm=PATH] [--output=PREFIX]\n--live: benchmark hono against https://registry.npmjs.org/ (default: 5 samples; local: 30)');
   process.exit(0);
 }
 if (process.platform === 'win32') throw new Error('This benchmark isolates dirs::home_dir through HOME and currently requires macOS/Linux.');
@@ -29,7 +29,7 @@ const samples = Number(values.samples ?? (values.live ? '5' : '30'));
 if (!Number.isSafeInteger(samples) || samples < 5 || samples > 10_000) throw new Error('--samples must be an integer between 5 and 10000');
 const filter = new RegExp(values.filter);
 const selectedTools = parseTools(values.tools);
-const binaries = { npm: 'npm', tnpm: resolve(values.tnpm), bun: 'bun' };
+const binaries = { tnpm: resolve(values.tnpm), bun: 'bun' };
 const fixture = await createFixture({ live: values.live });
 
 try {
@@ -100,7 +100,6 @@ try {
     }
     if (pair.tools.tnpm && !pair.tools.tnpm.skipped) {
       pair.relativeToTnpm = Object.fromEntries(selectedTools.filter(tool => tool !== 'tnpm' && !pair.tools[tool].skipped).map(tool => [tool, pair.tools[tool].avg / pair.tools.tnpm.avg]));
-      if (pair.relativeToTnpm.npm !== undefined) pair.speedup = pair.relativeToTnpm.npm;
     }
     results.push(pair);
   }
@@ -119,7 +118,7 @@ try {
     ...(fixture.live ? [
       `- Live registry: ${fixture.registry}; package: ${target.spec}. Version resolved once by ${target.resolvedBy} before timing.`,
       '- Requests target the public HTTPS registry with no benchmark-inserted server/proxy. OS system proxy settings may apply. DNS/TCP/TLS/CDN/network latency and CLI startup are included.',
-      '- Default mode may use each CLI\'s warmed cache. Force-network mode uses npm --prefer-online or tnpm/Bun --no-cache.',
+      '- Default mode may use each CLI\'s warmed cache. Force-network mode uses --no-cache.',
       '- HTTP counts, status codes, compressed byte counts, and actual cache hits are not instrumented: N/A means unknown, NOT zero requests.',
     ] : [
       '- Fixture: 20 direct / 100 total installed packages; 300 registry versions served by a loopback HTTP server.',
@@ -148,23 +147,23 @@ try {
     '- These are end-to-end CLI timings, not isolated parser/cache throughput. Startup/runtime overhead is included.',
     ...(fixture.live ? [
       '- Live mode does not offer a zero-network warm-cache comparison because actual HTTP requests cannot be counted here.',
-      '- Force-network flags request fresh registry information. npm may revalidate with HTTP 304 or write its cache; payloads/compression and cache behavior can differ across CLIs.',
+      '- Force-network flags request fresh registry information; payloads/compression and cache behavior can differ across CLIs.',
       '- The same published version is pinned for all CLIs. Hono package contents/scripts are never installed or executed.',
       '- Live measurements depend on network/CDN conditions and execution order; do not mix them with the deterministic loopback results.',
     ] : [
-      '- Warm cache: npm/Bun are offered --prefer-offline; tnpm uses its default fresh binary cache. Only zero-network runs are timed; Bun is explicitly skipped if the second warmup still fetches.',
-      '- Force network: npm uses --prefer-online (may write its cache); tnpm/Bun use --no-cache. Every invocation must fetch the full fixture.',
+      '- Warm cache: Bun is offered --prefer-offline; tnpm uses its default fresh binary cache. Only zero-network runs are timed; Bun is explicitly skipped if the second warmup still fetches.',
+      '- Force network: tnpm/Bun use --no-cache. Every invocation must fetch the full fixture.',
     ]),
     fixture.live ? '- Default view timings may benefit from cached data; actual cache hits and request counts are unknown in live mode.' : '- Default view behavior is reported separately. HTTP counts reveal any differences in cache policy.',
     '- Bun maps view to bun info.',
     ...(fixture.live ? [] : [
-      '- Bun text listings map to bun pm ls and are sourced from bun.lock; npm/tnpm inspect installed dependencies. This is not identical work.',
+      '- Bun text listings map to bun pm ls and are sourced from bun.lock; tnpm inspects installed dependencies. This is not identical work.',
       '- Bun listing JSON, funding and JSON version/config-report cases have no equivalent here and are not timed.',
     ]),
     '- Output formats and supported functionality are not identical (notably fund/version/full metadata); timings do not imply full npm compatibility.',
     '- OS filesystem caches are warm. This is one run, not a general claim about production registry latency or cold machine performance.', '',
   ].join('\n');
-  const output = resolve(values.output ?? join(directory, fixture.live ? 'results/live-hono' : 'results/with-bun'));
+  const output = resolve(values.output ?? join(directory, fixture.live ? 'results/live-tnpm-bun' : 'results/tnpm-bun'));
   await mkdir(dirname(output), { recursive: true });
   await writeFile(`${output}.json`, `${JSON.stringify(report, null, 2)}\n`);
   await writeFile(`${output}.md`, markdown);

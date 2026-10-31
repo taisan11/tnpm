@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 
 export const PACKAGE = '@bench/package';
 export const LATEST = '1.0.299';
-export const TOOLS = ['npm', 'tnpm', 'bun'];
+export const TOOLS = ['tnpm', 'bun'];
 
 export function packument() {
   const versions = {};
@@ -99,7 +99,7 @@ export async function createFixture({ live = false } = {}) {
       try { name = decodeURIComponent((request.url ?? '').slice(1)); } catch { name = ''; }
       const prefix = name.split('/')[0];
       const agent = request.headers['user-agent']?.toLowerCase() ?? '';
-      const tool = TOOLS.includes(prefix) ? prefix : agent.includes('tnpm/') ? 'tnpm' : agent.includes('bun/') ? 'bun' : 'npm';
+      const tool = TOOLS.includes(prefix) ? prefix : agent.includes('bun/') ? 'bun' : 'tnpm';
       if (TOOLS.includes(prefix)) name = name.slice(prefix.length + 1);
       requests[tool]++;
       if (name !== PACKAGE) {

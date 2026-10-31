@@ -12,6 +12,12 @@ pub fn run() -> Result<()> {
     if options.command == "cache" {
         return commands::cache::run(&options);
     }
+    if options.command == "upgrade" {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(commands::upgrade::run(&options));
+    }
     let cwd = std::env::current_dir().context("could not determine current directory")?;
     let start = options.prefix.as_deref().unwrap_or(&cwd);
     let target = if options.command == "init" {

@@ -6,7 +6,7 @@ export const TOOL_NAMES = TOOLS;
 export function parseTools(value) {
   const names = value.split(',').map(name => name.trim());
   if (!names.length || names.some(name => !TOOL_NAMES.includes(name)) || new Set(names).size !== names.length) {
-    throw new Error('--tools must be a comma-separated selection of npm,tnpm,bun without duplicates');
+    throw new Error('--tools must be a comma-separated selection of tnpm,bun without duplicates');
   }
   return names;
 }
@@ -33,7 +33,7 @@ function listing(output, all, asJson) {
 
 export function buildCases(fixture, target = { name: PACKAGE, version: LATEST, spec: PACKAGE }) {
   const local = (name, args, validate, bun) => ({ name, tools: {
-    npm: spec(args, validate), tnpm: spec(args, validate), bun,
+    tnpm: spec(args, validate), bun,
   } });
   const cases = fixture.live ? [] : [
     local('ls --json', ['ls', '--json'], output => listing(output, false, true), skip('bun pm ls has no JSON output; compare the text-listing cases instead.')),
@@ -43,7 +43,6 @@ export function buildCases(fixture, target = { name: PACKAGE, version: LATEST, s
     local('fund --json', ['fund', '--json'], output => assert.equal(json(output).length, 20), skip('No corresponding Bun funding command.')),
     local('version --json (read only)', ['version', '--json'], output => assert.equal(json(output)['bench-app'], '1.0.0'), skip('bun pm version prints the package version and usage, but does not support the JSON version report.')),
     { name: 'get registry', tools: {
-      npm: spec(['get', 'registry'], output => assert.equal(output.trim(), fixture.registries.npm)),
       tnpm: spec(['get', 'registry'], output => assert.equal(output.trim(), fixture.registries.tnpm)),
       bun: skip('No corresponding registry-config getter; bun pm pkg get reads package.json instead.'),
     } },
@@ -62,7 +61,7 @@ export function buildCases(fixture, target = { name: PACKAGE, version: LATEST, s
         const args = [tool === 'bun' ? 'info' : 'view', target.spec, ...fields, '--registry', fixture.registries[tool]];
         if (tool === 'bun') args.push('--cache-dir', fixture.environments.bun.BUN_INSTALL_CACHE_DIR);
         if (mode === 'warm cache' && tool !== 'tnpm') args.push('--prefer-offline');
-        if (mode === 'force network') args.push(tool === 'npm' ? '--prefer-online' : '--no-cache');
+        if (mode === 'force network') args.push('--no-cache');
         tools[tool] = spec(args, validate);
       }
       cases.push({ name: `view ${label} / ${mode}`, cache: mode, tools });

@@ -40,42 +40,45 @@ fn verify(bytes: &[u8], integrity: Option<&str>) -> Result<()> {
     bail!("unsupported tarball integrity algorithm")
 }
 
-fn tar_cache(url: &str, integrity: Option<&str>) -> Option<PathBuf> {
-    let key = format!("{url}\n{}", integrity.unwrap_or(""));
-    Some(
-        dirs::home_dir()?
-            .join(".tnpm/cache/tarballs-v1")
-            .join(format!("{:x}.tgz", Sha256::digest(key.as_bytes()))),
-    )
-}
-
-fn extracted_cache(url: &str, integrity: Option<&str>) -> Option<PathBuf> {
-    let key = format!("{url}\n{}", integrity.unwrap_or(""));
-    Some(
-        dirs::home_dir()?
-            .join(".tnpm/cache/packages-v1")
-            .join(format!("{:x}", Sha256::digest(key.as_bytes()))),
-    )
-}
-
-pub(super) fn package_cache_path(ctx: &Context<'_>, entry: &Value) -> Option<PathBuf> {
+pub(super) fn package_cache_path(ctx: &Context<'_>, entry: &Value, path: &str) -> Option<PathBuf> {
     if ctx.options.no_cache {
         return None;
     }
+    // Without an integrity digest, name and version cannot identify the bytes:
+    // another registry may serve different contents under the same coordinates.
+    entry.str("integrity").filter(|value| !value.is_empty())?;
     let resolved = entry.str("resolved")?;
     let url = reqwest::Url::parse(resolved).ok()?;
     if ctx.config.authenticated(&url) {
         return None;
     }
-    extracted_cache(resolved, entry.str("integrity"))
+    let name = entry
+        .str("name")
+        .unwrap_or_else(|| crate::lockfile::name_at(path));
+    let version = entry.str("version")?;
+    if !crate::lockfile::valid_name(name)
+        || version.is_empty()
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+    {
+        return None;
+    }
+    Some(
+        dirs::home_dir()?
+            .join(".tnpm/cache/packages-v2")
+            .join(format!("{name}@{version}")),
+    )
 }
 
-pub(super) fn cached_package(cache: &Path) -> Option<PathBuf> {
+pub(super) fn cached_package(cache: &Path, integrity: Option<&str>) -> Option<PathBuf> {
     let marker = fs::symlink_metadata(cache.join(".complete")).ok()?;
     let package = cache.join("package");
     let directory = fs::symlink_metadata(&package).ok()?;
     let manifest = fs::symlink_metadata(package.join("package.json")).ok()?;
     (marker.is_file()
+        && !marker.file_type().is_symlink()
+        && fs::read(cache.join(".complete")).ok()? == integrity.unwrap_or("").as_bytes()
         && directory.is_dir()
         && !directory.file_type().is_symlink()
         && manifest.is_file()
@@ -137,13 +140,45 @@ fn clone_file(_source: &Path, _destination: &Path) -> std::io::Result<bool> {
     Ok(false)
 }
 
+#[cfg(target_os = "macos")]
+fn validate_cloned_tree(path: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            validate_cloned_tree(&entry.path())?;
+        } else if !kind.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "package cache contains a link or special file",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn clone_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if fs::symlink_metadata(source).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        && clone_file(source, destination)?
+    {
+        // clonefile also clones symlinks; validate before the package can be placed.
+        if let Err(error) = validate_cloned_tree(destination) {
+            let _ = fs::remove_dir_all(destination);
+            return Err(error);
+        }
+        return Ok(());
+    }
+    clone_tree_files(source, destination)
+}
+
+fn clone_tree_files(source: &Path, destination: &Path) -> std::io::Result<()> {
     let metadata = fs::symlink_metadata(source)?;
     if metadata.is_dir() && !metadata.file_type().is_symlink() {
         fs::create_dir(destination)?;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
-            clone_tree(&entry.path(), &destination.join(entry.file_name()))?;
+            clone_tree_files(&entry.path(), &destination.join(entry.file_name()))?;
         }
         fs::set_permissions(destination, metadata.permissions())?;
         return Ok(());
@@ -160,7 +195,11 @@ pub(super) fn clone_tree(source: &Path, destination: &Path) -> std::io::Result<(
     Ok(())
 }
 
-pub(super) fn cache_extracted_package(source: &Path, cache: &Path) -> Result<()> {
+pub(super) fn cache_extracted_package(
+    source: &Path,
+    cache: &Path,
+    integrity: Option<&str>,
+) -> Result<()> {
     let parent = cache.parent().context("package cache path has no parent")?;
     fs::create_dir_all(parent)?;
     #[cfg(unix)]
@@ -173,13 +212,16 @@ pub(super) fn cache_extracted_package(source: &Path, cache: &Path) -> Result<()>
         fs::create_dir(&temporary)?;
         let package = temporary.join("package");
         clone_tree(source, &package)?;
-        private_cache_write(&temporary.join(".complete"), b"tnpm-package-cache-v1")?;
+        private_cache_write(
+            &temporary.join(".complete"),
+            integrity.unwrap_or("").as_bytes(),
+        )?;
         match fs::rename(&temporary, cache) {
             Ok(()) => Ok(()),
             Err(error) if cache.exists() => {
                 // Another concurrent install may have published the same key.
                 let _ = fs::remove_dir_all(&temporary);
-                if cached_package(cache).is_some() {
+                if cached_package(cache, integrity).is_some() {
                     Ok(())
                 } else {
                     Err(error.into())
@@ -207,19 +249,6 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value) -> Result<Vec<u8>>
     }
     let integrity = entry.str("integrity");
     let authorization = ctx.config.authorization(&url)?;
-    let cache = if ctx.options.no_cache || ctx.config.authenticated(&url) {
-        None
-    } else {
-        tar_cache(resolved, integrity)
-    };
-    if let Some(cache) = &cache
-        && let Ok(bytes) = fs::read(cache)
-        && verify(&bytes, integrity).is_ok()
-    {
-        ctx.progress
-            .event("prepare", &format!("tarball cache {}", Progress::url(&url)));
-        return Ok(bytes);
-    }
     if ctx.offline() {
         bail!("ENOTCACHED: tarball {resolved}");
     }
@@ -243,11 +272,6 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value) -> Result<Vec<u8>>
     }
     let bytes = response.bytes().await?.to_vec();
     verify(&bytes, integrity)?;
-    if let Some(cache) = &cache
-        && let Err(e) = private_cache_write(cache, &bytes)
-    {
-        crate::progress::message(format_args!("tnpm: could not cache tarball: {e}"));
-    }
     Ok(bytes)
 }
 
@@ -376,6 +400,22 @@ mod tests {
             fs::read(destination.join("nested/file.js")).unwrap(),
             b"modified"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cloned_package_rejects_symlinks() {
+        let root = std::env::temp_dir().join(format!(
+            "tnpm-clone-link-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        std::os::unix::fs::symlink("/etc", source.join("link")).unwrap();
+        assert!(clone_tree(&source, &destination).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

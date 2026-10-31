@@ -5,6 +5,49 @@ use crate::support::Fixture;
 
 #[test]
 #[cfg(unix)]
+fn run_supports_separator_before_script_and_exposes_original_lifecycle_script() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"scripts":{"pretest":"printf 'pre:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\"","test":"printf 'main:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\"","posttest":"printf 'post:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\""}}"#,
+    );
+    let expected = concat!(
+        "pre:pretest:printf 'pre:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\"\n",
+        "main:test:printf 'main:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\"\n",
+        "post:posttest:printf 'post:%s:%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\"\n",
+    );
+    assert_eq!(f.ok(&["run", "--", "test"]), expected);
+    assert!(!f.invoke(&["run", "--", "missing"]).status.success());
+    assert!(
+        f.invoke(&["run", "--if-present", "--", "missing"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn run_separator_forwards_arguments_without_interpreting_flags() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"scripts":{"test":"printf '<%s>\\n'"}}"#);
+    for args in [
+        &["run", "--", "test", "hello world", "--json"][..],
+        &["run", "test", "--", "hello world", "--json"][..],
+    ] {
+        assert_eq!(f.ok(args), "<hello world>\n<--json>\n");
+    }
+    f.file(
+        "package.json",
+        r#"{"scripts":{"test":"printf '%s\\n' \"$npm_lifecycle_script\"; :"}}"#,
+    );
+    assert_eq!(
+        f.ok(&["run", "--", "test", "extra argument"]),
+        "printf '%s\\n' \"$npm_lifecycle_script\"; :\n"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
     let f = Fixture::new();
     f.single("app", r#", "scripts":{"postinstall":":"}"#);

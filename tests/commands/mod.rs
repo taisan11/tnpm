@@ -9,4 +9,5 @@ mod output;
 mod peers;
 mod project;
 mod registry;
+mod runner;
 mod update;

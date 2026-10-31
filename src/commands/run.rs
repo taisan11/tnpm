@@ -1,14 +1,26 @@
 use crate::{cli::Options, config::Config, json::Value, manifest, scripts};
 use anyhow::{Context, Result, bail};
-use std::path::Path;
+use std::{env, path::Path};
 
 pub fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
-    let manifest = manifest::read(root)?.context("package.json not found")?;
+    let manifest = manifest::read(root)?;
     let scripts = manifest
-        .get("scripts")
+        .as_ref()
+        .and_then(|manifest| manifest.get("scripts"))
         .cloned()
         .unwrap_or_else(Value::object);
-    let Some(event) = options.arguments.first() else {
+    let (event, args) = if let Some(event) = options.arguments.first() {
+        let mut args = options.arguments[1..].to_vec();
+        args.extend(options.passthrough.iter().cloned());
+        (Some(event), args)
+    } else {
+        (
+            options.passthrough.first(),
+            options.passthrough.iter().skip(1).cloned().collect(),
+        )
+    };
+    let Some(event) = event else {
+        manifest.as_ref().context("package.json not found")?;
         if options.json {
             println!("{}", scripts.pretty());
         } else {
@@ -19,20 +31,36 @@ pub fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
         return Ok(());
     };
     let Some(text) = scripts.str(event) else {
+        if is_entry(event) {
+            let cwd = if options.prefix.is_some() {
+                root.to_owned()
+            } else {
+                env::current_dir().context("could not determine current directory")?
+            };
+            let entry = cwd.join(event);
+            return crate::runner::run(&cwd, &entry, &args);
+        }
+        manifest.as_ref().context("package.json not found")?;
         if options.if_present {
             return Ok(());
         }
         bail!("missing script: {event}");
     };
+    let manifest = manifest.as_ref().context("package.json not found")?;
     let hooks = !options.ignore_scripts && !config.enabled("ignore-scripts");
     if hooks {
-        scripts::lifecycle(root, &manifest, &format!("pre{event}"))?;
+        scripts::lifecycle(root, manifest, &format!("pre{event}"))?;
     }
-    let mut args = options.arguments[1..].to_vec();
-    args.extend(options.passthrough.clone());
-    scripts::command(root, &manifest, event, text, &args, None)?;
+    scripts::command(root, manifest, event, text, &args, None)?;
     if hooks {
-        scripts::lifecycle(root, &manifest, &format!("post{event}"))?;
+        scripts::lifecycle(root, manifest, &format!("post{event}"))?;
     }
     Ok(())
+}
+
+fn is_entry(name: &str) -> bool {
+    matches!(
+        Path::new(name).extension().and_then(|ext| ext.to_str()),
+        Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts")
+    )
 }

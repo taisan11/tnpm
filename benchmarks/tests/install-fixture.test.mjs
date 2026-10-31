@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { installArgs, installedPackages, isolatedEnvironment, templateFiles, TEMPLATE } from '../lib/install-fixture.mjs';
 
-test('offline benchmark installs disable lifecycle scripts', () => {
-  for (const tool of ['bun', 'npm', 'tnpm']) {
+test('offline benchmark installs allow lifecycle scripts', () => {
+  for (const tool of ['bun', 'tnpm']) {
     const args = installArgs(tool, true);
     assert.ok(args.includes('--offline'));
-    assert.ok(args.includes('--ignore-scripts'));
+    assert.ok(!args.includes('--ignore-scripts'));
     assert.equal(args[0], 'install');
     assert.ok(!args.includes('--no-cache'));
     assert.ok(!installArgs(tool).includes('--offline'));

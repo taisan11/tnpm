@@ -79,9 +79,13 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
     let old = Lockfile::read(root)?;
     let mut memo = FxHashMap::default();
     if options.command == "ci" {
-        let lock = old.context("ci requires package-lock.json")?;
+        let lock = old.context("ci requires package-lock.json or tnpm-lock.json")?;
         lock.validate_with(&manifest, ctx.peer_policy())?;
-        return materialize(&ctx, root, &manifest, &lock, true).await;
+        materialize(&ctx, root, &manifest, &lock, true).await?;
+        if !options.no_save && !root.join("tnpm-lock.json").try_exists()? {
+            lock.write(root, &manifest)?;
+        }
+        return Ok(());
     }
     let before_update = if options.command == "update" {
         ctx.progress

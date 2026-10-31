@@ -18,6 +18,14 @@ fn npm_and_tnpm_can_share_v3_lockfiles() {
         "package.json",
         r#"{"name":"fixture","version":"1.0.0","dependencies":{"app":"^1"}}"#,
     );
+    f.npm(&[
+        "install",
+        "--package-lock-only",
+        "--lockfile-version=3",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+    ]);
     f.ok(&["install", "--ignore-scripts"]);
     let lock = fs::read_to_string(f.root.join("package-lock.json")).unwrap();
     f.npm(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
@@ -54,6 +62,14 @@ fn npm_and_tnpm_share_scoped_cyclic_peer_sets_and_optional_peer_metadata() {
         r#", "peerDependencies":{"@scope/host":"1","@scope/plugin":"1"}"#,
     );
     f.file("package.json", r#"{"dependencies":{"@scope/plugin":"1"}}"#);
+    f.npm(&[
+        "install",
+        "--package-lock-only",
+        "--lockfile-version=3",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+    ]);
     f.ok(&["install", "--ignore-scripts", "--strict-peer-deps"]);
     f.ok(&["ls", "--all"]);
     f.npm(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
