@@ -3,6 +3,16 @@ use crate::support::Fixture;
 use std::fs;
 
 #[test]
+fn upgrade_rejects_arguments_without_project_or_network() {
+    let f = Fixture::new();
+    f.file(".npmrc", "//example.invalid/:_authToken=${MISSING_TOKEN}");
+    let output = f.invoke(&["upgrade", "unexpected"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("upgrade does not accept arguments"));
+    assert!(f.requests.lock().unwrap().is_empty());
+}
+
+#[test]
 fn init_paths_are_local_and_create_never_falls_back_to_init() {
     let f = Fixture::new();
     let parent = r#"{"name":"parent","custom":true}"#;

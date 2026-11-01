@@ -133,7 +133,6 @@ pub async fn run(options: &Options) -> Result<()> {
                     f.member("updated", false)?;
                     f.member("version", env!("CARGO_PKG_VERSION"))
                 }))
-                .to_string()
             );
         } else {
             println!(
@@ -159,9 +158,8 @@ pub async fn run(options: &Options) -> Result<()> {
             "{}",
             nojson::json(|f| f.object(|f| {
                 f.member("updated", true)?;
-                f.member("version", tag.as_str())
+                f.member("version", tag.strip_prefix('v').unwrap_or(&tag))
             }))
-            .to_string()
         );
     } else {
         println!("Updated tnpm to {tag}.");
