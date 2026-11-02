@@ -95,7 +95,7 @@ export async function createInstallFixture(binaries, ref = 'main') {
       { cwd: projects.bootstrap, env: environments.bootstrap, timeout: 180_000 });
     const lockBytes = await readFile(join(projects.bootstrap, 'package-lock.json'));
     const lock = JSON.parse(lockBytes);
-    for (const tool of TOOLS) await writeFile(join(projects[tool], 'package-lock.json'), lockBytes);
+    for (const tool of TOOLS.filter(tool => tool !== 'tnpm')) await writeFile(join(projects[tool], 'package-lock.json'), lockBytes);
     return { root, projects, environments, manifest, files, commit: commit.sha,
       manifestSha256: createHash('sha256').update(packageBytes).digest('hex'),
       lockSha256: createHash('sha256').update(lockBytes).digest('hex'), lock,

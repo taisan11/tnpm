@@ -5,7 +5,8 @@ use crate::{
     fs::write_json,
     json::Value,
     lockfile::{self, Lockfile},
-    manifest, scripts, semver, spec, table,
+    manifest, scripts, semver, spec,
+    util::style::table,
 };
 use anyhow::{Context as _, Result, bail};
 use futures_util::{StreamExt, stream};
@@ -31,13 +32,13 @@ fn flag(data: &Value, key: &str) -> bool {
 }
 
 fn summary(options: &Options, action: &str, count: usize) {
-    crate::progress::finish();
+    crate::util::style::progress::finish();
     if matches!(options.command.as_str(), "exec" | "create") {
         eprintln!(
             "{}",
-            crate::style::stderr(
+            crate::util::style::stderr(
                 &format!("{action} {count} packages"),
-                crate::style::Tone::Success
+                crate::util::style::Tone::Success
             )
         );
     } else if options.json {
@@ -47,9 +48,9 @@ fn summary(options: &Options, action: &str, count: usize) {
     } else {
         println!(
             "{}",
-            crate::style::stdout(
+            crate::util::style::stdout(
                 &format!("{action} {count} packages"),
-                crate::style::Tone::Success
+                crate::util::style::Tone::Success
             )
         );
     }
@@ -79,7 +80,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
     let old = Lockfile::read(root)?;
     let mut memo = FxHashMap::default();
     if options.command == "ci" {
-        let lock = old.context("ci requires package-lock.json or tnpm-lock.json")?;
+        let lock = old.context("ci requires tnpm-lock.json")?;
         lock.validate_with(&manifest, ctx.peer_policy())?;
         materialize(&ctx, root, &manifest, &lock, true).await?;
         if !options.no_save && !root.join("tnpm-lock.json").try_exists()? {
@@ -285,9 +286,9 @@ async fn outdated(ctx: &Context<'_>, root: &Path) -> Result<()> {
             if ctx.options.plain {
                 "All dependencies are up to date.".to_owned()
             } else {
-                crate::style::stdout(
+                crate::util::style::stdout(
                     "All dependencies are up to date.",
-                    crate::style::Tone::Success,
+                    crate::util::style::Tone::Success,
                 )
             }
         );

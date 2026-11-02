@@ -1,8 +1,8 @@
 //! Per-command configuration, HTTP clients, and metadata memoization.
 use super::flag;
 use crate::{
-    cli::Options, config::Config, json::Value, lockfile, progress::Progress, registry, scripts,
-    spec,
+    cli::Options, config::Config, json::Value, lockfile, registry, scripts, spec,
+    util::style::progress::Progress,
 };
 use anyhow::{Context as _, Result, bail};
 use rustc_hash::FxHashMap;
@@ -44,7 +44,7 @@ impl<'a> Context<'a> {
     }
     pub(super) fn warn_peers(&self, lock: &lockfile::Lockfile) {
         for warning in lock.peer_warnings(self.peer_policy()) {
-            crate::progress::message(format_args!(
+            crate::util::style::progress::message(format_args!(
                 "tnpm: warning: overriding peer dependency: {}",
                 warning.strip_prefix("ERESOLVE: ").unwrap_or(&warning)
             ));

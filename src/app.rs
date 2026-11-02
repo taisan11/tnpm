@@ -1,11 +1,9 @@
 //! Application setup and command dispatch; process exit handling stays in main.
 use crate::{cli, commands, config, install};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 
 pub fn run() -> Result<()> {
-    // noargs::Error deliberately implements neither Display nor std::error::Error.
-    let Some(options) = cli::parse(noargs::raw_args()).map_err(|error| anyhow!("{error:?}"))?
-    else {
+    let Some(options) = cli::parse(std::env::args().skip(1))? else {
         return Ok(());
     };
     // Cache maintenance is global and must work without a project or a valid npmrc.

@@ -48,26 +48,6 @@ pub(crate) struct Fixture {
 }
 
 impl Fixture {
-    pub(crate) fn npm(&self, args: &[&str]) {
-        let out = Command::new("npm")
-            .args(args)
-            .current_dir(&self.root)
-            .env("HOME", self.root.join("home"))
-            .env("npm_config_registry", &self.url)
-            .env("npm_config_cache", self.root.join("npm-cache"))
-            .env("npm_config_userconfig", self.root.join("absent.npmrc"))
-            .env(
-                "npm_config_globalconfig",
-                self.root.join("absent-global.npmrc"),
-            )
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "npm {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
     pub(crate) fn single(&self, name: &str, extra: &str) {
         self.releases(name, "1.0.0", &[("1.0.0", extra)]);
     }

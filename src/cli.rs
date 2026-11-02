@@ -44,291 +44,182 @@ pub struct Options {
     pub plain: bool,
 }
 
-pub fn parse(mut args: noargs::RawArgs) -> noargs::Result<Option<Options>> {
-    // Stop interpreting flags at the script/binary/initializer operand or an explicit `--`.
-    let raw: Vec<String> = args.remaining_args().map(|(_, s)| s.to_owned()).collect();
-    let (head, tail) = split_passthrough(&raw);
-    args = noargs::RawArgs::new(std::iter::once("tnpm".into()).chain(head));
-    args.metadata_mut().app_name = "tnpm";
-    args.metadata_mut().app_description = "A fast, small npm-compatible package manager";
-    if noargs::VERSION_FLAG.take(&mut args).is_present() {
-        println!("{}", env!("CARGO_PKG_VERSION"));
-        return Ok(None);
-    }
-    let mut options = Options {
-        json: noargs::flag("json")
-            .doc("Output JSON")
-            .take(&mut args)
-            .is_present(),
-        no_cache: noargs::flag("no-cache")
-            .doc("Bypass registry cache reads and writes (network commands)")
-            .take(&mut args)
-            .is_present(),
-        prefix: noargs::opt("prefix")
-            .doc("Project directory")
-            .take(&mut args)
-            .present_and_then(|o| o.value().parse())?,
-        registry: string_option(&mut args, "registry")?,
-        userconfig: string_option(&mut args, "userconfig")?,
-        globalconfig: string_option(&mut args, "globalconfig")?,
-        passthrough: tail,
-        ..Options::default()
-    };
-    noargs::HELP_FLAG.take_help(&mut args);
-    // The help label can include aliases; only the first word is a command name.
-    let commands: &[(&str, &str)] = &[
-        ("ls", "List installed dependencies"),
-        (
-            "fund",
-            "List dependency funding URLs (does not open a browser)",
-        ),
-        ("version", "Print versions or bump the package version"),
-        (
-            "upgrade",
-            "Upgrade tnpm itself to the latest GitHub release",
-        ),
-        ("view", "Read package metadata from a registry"),
-        ("get", "Read npm configuration"),
-        (
-            "cache",
-            "Show cache disk usage; cache rm removes all tnpm caches",
-        ),
-        ("install (alias: i, add)", "Install dependencies"),
-        ("uninstall (alias: remove, rm)", "Remove dependencies"),
-        ("ci", "Clean install from a matching lockfile"),
-        ("exec (alias: x)", "Run a package binary"),
-        (
-            "init",
-            "Create package.json in [PATH] (default: current directory)",
-        ),
-        ("create", "Run a create-* initializer"),
-        ("outdated", "Show outdated direct dependencies"),
-        (
-            "update",
-            "Update dependencies (use --latest to upgrade declared ranges)",
-        ),
-        ("prune", "Remove extraneous packages"),
-        ("run", "Run a package script"),
-    ];
-    let alias = args
-        .remaining_args()
-        .next()
-        .and_then(|(_, arg)| COMMAND_ALIASES.get_entry(arg))
-        .map(|(&alias, &command)| (alias, command));
-    for &(label, doc) in commands {
-        let command = label.split_whitespace().next().unwrap();
-        // Register the actual spelling when matched, otherwise the help label.
-        let name = match alias {
-            Some((alias, canonical)) if canonical == command => alias,
-            _ if args
-                .remaining_args()
-                .next()
-                .is_some_and(|(_, arg)| arg == command) =>
-            {
-                command
-            }
-            _ => label,
-        };
-        if noargs::cmd(name).doc(doc).take(&mut args).is_present() {
-            options.command = command.into();
+const COMMANDS: &[&str] = &[
+    "ls",
+    "fund",
+    "version",
+    "upgrade",
+    "view",
+    "get",
+    "cache",
+    "install",
+    "uninstall",
+    "ci",
+    "exec",
+    "init",
+    "create",
+    "outdated",
+    "update",
+    "prune",
+    "run",
+];
+
+const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  ci, init\n  create\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --userconfig <PATH>  --globalconfig <PATH>  --latest\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --strict-peer-deps  --force, -f  --offline  --save-dev, -D\n  --save-optional, -O  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
+
+/// Parse tnpm options until an operand starts a script or executable's arguments.
+pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Options>> {
+    use anyhow::{Context, bail};
+    let raw: Vec<String> = args.into_iter().collect();
+    let mut options = Options::default();
+    let mut i = 0;
+    while i < raw.len() {
+        let arg = &raw[i];
+        if arg == "--" {
+            options.passthrough.extend_from_slice(&raw[i + 1..]);
             break;
         }
-    }
-    if options.command == "update" {
-        options.latest = noargs::flag("latest")
-            .doc("Upgrade declared dependencies to the latest tag, including major versions")
-            .take(&mut args)
-            .is_present();
-    }
-    if options.command == "outdated" {
-        options.plain = noargs::flag("plain")
-            .doc("Print a borderless, uncolored table")
-            .take(&mut args)
-            .is_present();
-    }
-    if options.command == "prune" {
-        options.all = noargs::flag("all")
-            .short('a')
-            .doc("Remove the entire node_modules directory")
-            .take(&mut args)
-            .is_present();
-    }
-    match options.command.as_str() {
-        "ls" => {
-            options.all = noargs::flag("all")
-                .short('a')
-                .doc("Include transitive dependencies")
-                .take(&mut args)
-                .is_present();
-            options.depth = noargs::opt("depth")
-                .doc("Maximum dependency depth (default: 0)")
-                .take(&mut args)
-                .present_and_then(|o| o.value().parse())?;
-        }
-        "version" => {
-            options.preid = string_option(&mut args, "preid")?;
-            options.no_git_tag = noargs::flag("no-git-tag-version")
-                .doc("Do not commit or tag")
-                .take(&mut args)
-                .is_present();
-            options.ignore_scripts = noargs::flag("ignore-scripts").take(&mut args).is_present();
-            options.allow_same_version = noargs::flag("allow-same-version")
-                .take(&mut args)
-                .is_present();
-        }
-        "install" | "uninstall" | "ci" | "update" | "prune" | "exec" | "init" | "create"
-        | "run" | "outdated" => {
-            options.ignore_scripts = noargs::flag("ignore-scripts").take(&mut args).is_present();
-            options.legacy_peer_deps = noargs::flag("legacy-peer-deps")
-                .take(&mut args)
-                .is_present();
-            options.strict_peer_deps = noargs::flag("strict-peer-deps")
-                .doc("Fail on peer version mismatches (default: warn and continue)")
-                .take(&mut args)
-                .is_present();
-            options.force = noargs::flag("force")
-                .short('f')
-                .doc("Allow peer version mismatches even in strict mode")
-                .take(&mut args)
-                .is_present();
-            options.offline = noargs::flag("offline").take(&mut args).is_present();
-            options.save_dev = noargs::flag("save-dev")
-                .short('D')
-                .take(&mut args)
-                .is_present();
-            options.save_optional = noargs::flag("save-optional")
-                .short('O')
-                .take(&mut args)
-                .is_present();
-            options.save_exact = noargs::flag("save-exact")
-                .short('E')
-                .take(&mut args)
-                .is_present();
-            options.no_save = noargs::flag("no-save").take(&mut args).is_present();
-            noargs::flag("save").short('S').take(&mut args);
-            options.lock_only = noargs::flag("package-lock-only")
-                .take(&mut args)
-                .is_present();
-            options.omit = string_option(&mut args, "omit")?;
-            options.production = noargs::flag("production").take(&mut args).is_present();
-            options.if_present = noargs::flag("if-present").take(&mut args).is_present();
-            options.yes = noargs::flag("yes").short('y').take(&mut args).is_present();
-            options.call = noargs::opt("call")
-                .short('c')
-                .take(&mut args)
-                .present_and_then(|o| o.value().parse())?;
-            while let Some(package) = noargs::opt("package")
-                .short('p')
-                .take(&mut args)
-                .present_and_then(|o| o.value().parse::<String>())?
-            {
-                options.exec_packages.push(package);
+        if arg.starts_with('-') && arg != "-" {
+            let (name, inline) = arg
+                .split_once('=')
+                .map_or((arg.as_str(), None), |(n, v)| (n, Some(v)));
+            let takes_value = matches!(
+                name,
+                "--prefix"
+                    | "--registry"
+                    | "--userconfig"
+                    | "--globalconfig"
+                    | "--depth"
+                    | "--preid"
+                    | "--omit"
+                    | "--call"
+                    | "-c"
+                    | "--package"
+                    | "-p"
+            );
+            let value = if takes_value {
+                Some(if let Some(value) = inline {
+                    value.to_owned()
+                } else {
+                    i += 1;
+                    raw.get(i)
+                        .with_context(|| format!("{name} requires a value"))?
+                        .clone()
+                })
+            } else {
+                if inline.is_some() {
+                    bail!("{name} does not take a value");
+                }
+                None
+            };
+            match name {
+                "--help" | "-h" => {
+                    print!("{HELP}");
+                    return Ok(None);
+                }
+                "--version" | "-V" => {
+                    println!("{}", env!("CARGO_PKG_VERSION"));
+                    return Ok(None);
+                }
+                "--json" => options.json = true,
+                "--no-cache" => options.no_cache = true,
+                "--prefix" => options.prefix = value.map(PathBuf::from),
+                "--registry" => options.registry = value,
+                "--userconfig" => options.userconfig = value,
+                "--globalconfig" => options.globalconfig = value,
+                "--all" | "-a" if matches!(options.command.as_str(), "ls" | "prune") => {
+                    options.all = true
+                }
+                "--depth" if options.command == "ls" => {
+                    options.depth = Some(value.unwrap().parse().context("invalid --depth")?)
+                }
+                "--preid" if options.command == "version" => options.preid = value,
+                "--no-git-tag-version" if options.command == "version" => options.no_git_tag = true,
+                "--allow-same-version" if options.command == "version" => {
+                    options.allow_same_version = true
+                }
+                "--latest" if options.command == "update" => options.latest = true,
+                "--plain" if options.command == "outdated" => options.plain = true,
+                "--ignore-scripts" => options.ignore_scripts = true,
+                "--legacy-peer-deps" => options.legacy_peer_deps = true,
+                "--strict-peer-deps" => options.strict_peer_deps = true,
+                "--force" | "-f" => options.force = true,
+                "--offline" => options.offline = true,
+                "--save-dev" | "-D" => options.save_dev = true,
+                "--save-optional" | "-O" => options.save_optional = true,
+                "--save-exact" | "-E" => options.save_exact = true,
+                "--no-save" => options.no_save = true,
+                "--save" | "-S" => {}
+                "--package-lock-only" => options.lock_only = true,
+                "--omit" => options.omit = value,
+                "--production" => options.production = true,
+                "--if-present" => options.if_present = true,
+                "--yes" | "-y" => options.yes = true,
+                "--call" | "-c" => options.call = value,
+                "--package" | "-p" => options.exec_packages.push(value.unwrap()),
+                _ => bail!("unknown option: {name}"),
+            }
+        } else if options.command.is_empty() {
+            let canonical = COMMAND_ALIASES.get(arg.as_str()).copied().unwrap_or(arg);
+            if COMMANDS.contains(&canonical) {
+                options.command = canonical.to_owned();
+            } else {
+                options.command = "run".into();
+                options.arguments.push(arg.clone());
+                let tail = &raw[i + 1..];
+                options
+                    .passthrough
+                    .extend_from_slice(tail.strip_prefix(&["--".to_owned()]).unwrap_or(tail));
+                break;
+            }
+        } else {
+            options.arguments.push(arg.clone());
+            if matches!(options.command.as_str(), "run" | "exec" | "create") {
+                let tail = &raw[i + 1..];
+                options
+                    .passthrough
+                    .extend_from_slice(tail.strip_prefix(&["--".to_owned()]).unwrap_or(tail));
+                break;
             }
         }
-        _ => {}
+        i += 1;
     }
-    if options.command.is_empty() && args.remaining_args().next().is_none() {
-        args.metadata_mut().help_mode = true;
-    } else if !options.command.is_empty() {
-        while let Some(arg) = noargs::arg("[ARG]...")
-            .take(&mut args)
-            .present_and_then(|a| a.value().parse::<String>())?
-        {
-            options.arguments.push(arg);
+    if options.command.is_empty() {
+        if !options.passthrough.is_empty() {
+            bail!("missing command");
         }
-    }
-    if let Some(help) = args.finish()? {
-        print!("{help}");
+        print!("{HELP}");
         return Ok(None);
     }
     if options.command == "version" && options.arguments.len() > 1 {
-        return Err("version accepts at most one version or release type".into());
+        bail!("version accepts at most one version or release type");
     }
     if options.command == "upgrade"
         && (!options.arguments.is_empty() || !options.passthrough.is_empty())
     {
-        return Err("upgrade does not accept arguments".into());
+        bail!("upgrade does not accept arguments");
     }
     if options.command == "init" {
         options.arguments.append(&mut options.passthrough);
     }
-    if options.command == "init" && (options.arguments.len() > 1 || !options.passthrough.is_empty())
-    {
-        return Err("init accepts at most one path; use create NAME to run an initializer".into());
+    if options.command == "init" && options.arguments.len() > 1 {
+        bail!("init accepts at most one path; use create NAME to run an initializer");
     }
     if options.command == "create" && options.arguments.is_empty() {
-        return Err("create requires an initializer name".into());
+        bail!("create requires an initializer name");
     }
     if options.command == "fund" && !options.arguments.is_empty() {
-        return Err(
-            "fund currently lists all funding URLs; package/browser selection is not supported"
-                .into(),
-        );
+        bail!("fund currently lists all funding URLs; package/browser selection is not supported");
     }
     Ok(Some(options))
-}
-
-fn split_passthrough(raw: &[String]) -> (Vec<String>, Vec<String>) {
-    let mut command = None;
-    let mut skip = false;
-    for (i, arg) in raw.iter().enumerate() {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if arg == "--" {
-            return (raw[..i].to_vec(), raw[i + 1..].to_vec());
-        }
-        if matches!(
-            arg.as_str(),
-            "--prefix"
-                | "--registry"
-                | "--userconfig"
-                | "--globalconfig"
-                | "--package"
-                | "-p"
-                | "--call"
-                | "-c"
-                | "--omit"
-        ) {
-            skip = true;
-            continue;
-        }
-        if arg.starts_with('-') {
-            continue;
-        }
-        if command.is_none() {
-            command = Some(arg.as_str());
-        } else if matches!(command, Some("run" | "exec" | "x" | "create")) {
-            let tail = &raw[i + 1..];
-            return (
-                raw[..=i].to_vec(),
-                tail.strip_prefix(&["--".to_owned()])
-                    .unwrap_or(tail)
-                    .to_vec(),
-            );
-        }
-    }
-    (raw.to_vec(), Vec::new())
-}
-
-fn string_option(args: &mut noargs::RawArgs, name: &'static str) -> noargs::Result<Option<String>> {
-    noargs::opt(name)
-        .take(args)
-        .present_and_then(|o| o.value().parse())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn options(args: &[&str]) -> Options {
-        parse(noargs::RawArgs::new(
-            std::iter::once("tnpm")
-                .chain(args.iter().copied())
-                .map(str::to_owned),
-        ))
-        .unwrap()
-        .unwrap()
+        parse(args.iter().map(|s| (*s).to_owned()))
+            .unwrap()
+            .unwrap()
     }
     #[test]
     fn script_and_binary_flags_are_not_cli_flags() {

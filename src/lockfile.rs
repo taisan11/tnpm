@@ -221,26 +221,15 @@ fn exists(path: &Path) -> Result<bool> {
 
 impl Lockfile {
     pub fn read(root: &Path) -> Result<Option<Self>> {
-        let native = root.join("tnpm-lock.json");
-        let native_exists = exists(&native)?;
-        let npm = root.join("package-lock.json");
-        let npm_exists = !native_exists && exists(&npm)?;
-        if !native_exists && !npm_exists {
+        let path = root.join("tnpm-lock.json");
+        if !exists(&path)? {
             return Ok(None);
         }
-        let path = if native_exists { native } else { npm };
-        let text = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-        };
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("could not read {}", path.display()))?;
         let value =
             Value::parse(&text).with_context(|| format!("could not parse {}", path.display()))?;
-        if !native_exists {
-            if !matches!(value.get("lockfileVersion"), Some(Value::Number(v)) if v == "3" || v == "2")
-            {
-                bail!("only package-lock.json lockfileVersion 2/3 is supported");
-            }
-        } else if !matches!(value.get("tnpmLockfileVersion"), Some(Value::Number(v)) if v == "1") {
+        if !matches!(value.get("tnpmLockfileVersion"), Some(Value::Number(v)) if v == "1") {
             bail!("only tnpm-lock.json tnpmLockfileVersion 1 is supported");
         }
         let Value::Object(fields) = value else {
@@ -254,7 +243,7 @@ impl Lockfile {
         };
         let mut packages = BTreeMap::new();
         for (path, mut entry) in entries {
-            if native_exists && !path.is_empty() {
+            if !path.is_empty() {
                 let Value::Array(parts) = entry else {
                     bail!("invalid compact package: {path}")
                 };
@@ -295,7 +284,7 @@ impl Lockfile {
 
     pub fn value(&self, manifest: &Value, hidden: bool) -> Value {
         let mut value = copy_fields(manifest, &["name", "version"]);
-        value.set("lockfileVersion", Value::Number("3".into()));
+        value.set("tnpmLockfileVersion", Value::Number("1".into()));
         value.set("requires", Value::Bool(true));
         value.set(
             "packages",

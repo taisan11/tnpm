@@ -1,6 +1,6 @@
 //! Tarball fetching, integrity checks, safe extraction, and copy-on-write caching.
 use super::context::Context;
-use crate::{fs::unique, json::Value, progress::Progress};
+use crate::{fs::unique, json::Value, util::style::progress::Progress};
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256, Sha512};

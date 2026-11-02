@@ -258,7 +258,7 @@ fn install_and_update_json_keep_lifecycle_output_on_stderr() {
 #[test]
 fn malformed_json_reports_the_file_and_original_cause() {
     let f = Fixture::new();
-    for file in ["package.json", "package-lock.json"] {
+    for file in ["package.json", "tnpm-lock.json"] {
         f.file("package.json", r#"{"name":"fixture"}"#);
         f.file(file, "[");
         let out = f.invoke(&["install", "--ignore-scripts"]);

@@ -3,7 +3,6 @@ mod aliases;
 mod cache;
 mod config;
 mod install;
-mod npm_compat;
 mod outdated;
 mod output;
 mod peers;

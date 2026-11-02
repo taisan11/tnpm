@@ -81,10 +81,10 @@ fn remove_path(path: &Path) -> Result<()> {
 }
 
 fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::SystemTime)> {
-    let path = root.join("node_modules/.package-lock.json");
+    let path = root.join("node_modules/.tnpm-lock.json");
     let modified = fs::metadata(&path).ok()?.modified().ok()?;
     let value = Value::parse(&fs::read_to_string(path).ok()?).ok()?;
-    if value.get("lockfileVersion") != Some(&Value::Number("3".into())) {
+    if value.get("tnpmLockfileVersion") != Some(&Value::Number("1".into())) {
         return None;
     }
     let entries = value.get("packages")?;
@@ -369,7 +369,7 @@ pub(super) async fn materialize(
                             && let Err(error) =
                                 cache_extracted_package(&dest, &cache, integrity.as_deref())
                         {
-                            crate::progress::message(format_args!(
+                            crate::util::style::progress::message(format_args!(
                                 "tnpm: could not cache extracted package: {error}"
                             ));
                         }
@@ -405,7 +405,9 @@ pub(super) async fn materialize(
                     prepared.insert(path, destination);
                 }
                 Err(e) if flag(&lock.packages[&path], "optional") => {
-                    crate::progress::message(format_args!("tnpm: skipped optional {path}: {e:#}"));
+                    crate::util::style::progress::message(format_args!(
+                        "tnpm: skipped optional {path}: {e:#}"
+                    ));
                     selected.remove(&path);
                 }
                 Err(e) => return Err(e),
@@ -471,7 +473,7 @@ pub(super) async fn materialize(
                             if !flag(&lock.packages[path], "optional") {
                                 return Err(error);
                             }
-                            crate::progress::message(format_args!(
+                            crate::util::style::progress::message(format_args!(
                                 "tnpm: skipped optional {path}: {error:#}"
                             ));
                             selected.remove(path);
@@ -501,7 +503,7 @@ pub(super) async fn materialize(
         let mut hidden = lock.clone();
         hidden.packages.retain(|path, _| selected.contains(path));
         write_json(
-            &root.join("node_modules/.package-lock.json"),
+            &root.join("node_modules/.tnpm-lock.json"),
             &hidden.value(manifest, true),
         )?;
         Ok(())
@@ -574,7 +576,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
             lock.write(root, &manifest)?;
         }
     }
-    remove_path(&root.join("node_modules/.package-lock.json"))?;
+    remove_path(&root.join("node_modules/.tnpm-lock.json"))?;
     summary(ctx.options, "removed", removed);
     Ok(())
 }

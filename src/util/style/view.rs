@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(super) fn summary(package: &Value, now: SystemTime) -> String {
+pub(crate) fn summary(package: &Value, now: SystemTime) -> String {
     let mut output = String::new();
     let dependencies = package
         .get("dependencies")

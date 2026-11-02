@@ -7,8 +7,8 @@ use self::{
 use crate::{
     json::Value,
     profile::Profile,
-    progress::Progress,
     semver::{self, Version},
+    util::style::progress::Progress,
 };
 use anyhow::{Context, Result, bail};
 use std::{cmp::Ordering, time::SystemTime};
@@ -237,7 +237,7 @@ pub async fn fetch_using(
 
 fn cache_warning(result: std::io::Result<()>) {
     if let Err(error) = result {
-        crate::progress::message(format_args!(
+        crate::util::style::progress::message(format_args!(
             "tnpm: could not update registry cache: {error}"
         ));
     }

@@ -1,4 +1,8 @@
-//! Per-stream color policy; colored supplies the styles after width calculations.
+//! CLI presentation: per-stream colors, tables, progress and command-specific formatting.
+pub mod progress;
+pub mod table;
+pub mod view;
+
 use colored::Colorize;
 use std::io::{self, IsTerminal};
 

@@ -1,6 +1,6 @@
 use crate::{
     cli::Options, config::Config, json::Value, manifest, profile::Profile, registry,
-    spec::package_spec,
+    spec::package_spec, util::style::view as format,
 };
 use anyhow::{Context, Result};
 use std::{path::Path, time::SystemTime};
@@ -152,4 +152,3 @@ mod tests {
         assert!(field(&data, "dist.missing").is_none());
     }
 }
-mod format;

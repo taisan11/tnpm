@@ -3,12 +3,12 @@ use crate::{
     cli::Options,
     json::Value,
     lockfile::{self, Lockfile},
-    table,
+    util::style::table,
 };
 use std::collections::BTreeSet;
 
 pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
-    crate::progress::finish();
+    crate::util::style::progress::finish();
     let paths: BTreeSet<_> = before
         .packages
         .keys()
@@ -61,7 +61,10 @@ pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
     } else if rows.is_empty() {
         println!(
             "{}",
-            crate::style::stdout("No packages were updated.", crate::style::Tone::Success)
+            crate::util::style::stdout(
+                "No packages were updated.",
+                crate::util::style::Tone::Success
+            )
         );
     } else {
         print!("{}", table::format(["Package", "Before", "After"], &rows));

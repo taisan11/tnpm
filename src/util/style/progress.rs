@@ -28,7 +28,7 @@ impl Renderer {
         if let Some(columns) = columns {
             let line = fit_line(text, columns);
             let line = if self.color {
-                crate::style::stderr(&line, crate::style::Tone::Accent)
+                crate::util::style::stderr(&line, crate::util::style::Tone::Accent)
             } else {
                 line
             };
@@ -125,7 +125,7 @@ pub fn finish() -> bool {
 pub fn message(message: fmt::Arguments<'_>) {
     let text = message.to_string();
     let text = if text.starts_with("tnpm: warning:") || text.starts_with("tnpm: skipped optional") {
-        crate::style::stderr(&text, crate::style::Tone::Warning)
+        crate::util::style::stderr(&text, crate::util::style::Tone::Warning)
     } else {
         text
     };

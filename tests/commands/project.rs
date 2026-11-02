@@ -63,6 +63,24 @@ fn init_paths_are_local_and_create_never_falls_back_to_init() {
 }
 
 #[test]
+fn unknown_commands_run_scripts_and_forward_arguments() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"scripts":{"hello":"printf '%s\\n'", "install":"echo script-install"}}"#,
+    );
+    assert_eq!(
+        f.ok(&["hello", "--json", "--help", "hello world"]),
+        "--json\n--help\nhello world\n"
+    );
+    assert_eq!(f.ok(&["hello", "--", "argument"]), "argument\n");
+    assert_eq!(f.ok(&["run", "install"]), "script-install\n");
+    let missing = f.invoke(&["missing-script"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing script: missing-script"));
+}
+
+#[test]
 fn help_groups_aliases_with_their_canonical_commands() {
     let f = Fixture::new();
     for args in [&[][..], &["--help"][..]] {

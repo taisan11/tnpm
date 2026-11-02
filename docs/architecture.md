@@ -16,7 +16,6 @@ src/
     run.rs                 run コマンドと pre/post フック
     version.rs             version コマンド、ファイル更新・Git 操作
     view.rs                view コマンド、フィールド選択
-    view/format.rs         レジストリ情報の表示整形
   install/
     mod.rs                 install / ci / update / uninstall / exec / outdated の制御
     update.rs              update --latest の取得・宣言更新とエイリアス維持
@@ -36,13 +35,15 @@ src/
   manifest.rs              package.json の読み込みと検証
   semver.rs                SemVer の解析・比較・範囲・増分
   spec.rs                  パッケージ名とバージョン／タグ／範囲指定の解析
-  table.rs                 Unicode 表示幅に基づく表の整形
+  util/style/
+    mod.rs                 colored による stdout / stderr 別の色制御
+    table.rs               Unicode 表示幅に基づく表の整形
+    progress.rs            stderr の段階別進捗と安全な URL 表示
+    view.rs                レジストリ情報の表示整形
   scripts.rs               共通のプロセス実行・フック・bin 探索
   fs.rs                    JSON の一時ファイル経由の保存と一意な識別子
   json.rs                  nojson を使う共通 JSON 表現
   profile.rs               任意の性能計測
-  progress.rs              stderr の段階別進捗と安全な URL 表示
-  style.rs                 colored による stdout / stderr 別の色制御
 build.rs                   ビルド時コミットの埋め込みと Git 変更の監視
 tests/
   commands.rs              CLI 結合テストの実行入口（単一の Cargo test target）
@@ -66,6 +67,7 @@ docs/                      設計・仕様・開発手順
 - `registry::Query` が全表示・フィールド指定・候補全件・最新1件を区別します。install は表示用メタデータを復元せず、`view` は参照するルートキーだけを要求できます。キャッシュは全レスポンスを保持するため、別のクエリでも同じ保存済みデータを使用します。
 - `lockfile` は npm 互換 JSON を保持し、`lockfile/graph` が走査用の読み取り専用スナップショットを作ります。依存名・範囲は元の JSON から借用し、依存先・オフセット・フラグを別々の連続配列に保存します。分類が終わって借用を解放してから JSON のフラグを更新します。物理配置を変更する resolver へ永続的な索引を持ち込まず、索引の無効化漏れを避けます。
 - `manifest` / `semver` / `spec` / `fs` / `scripts` はコマンド実装に依存しません。共通処理を追加するときは、特定のコマンドを経由して呼び出さないようにします。
+- `util/style` は色、表、進捗および `view` の人間向け出力の整形をまとめます。コマンドの実行やデータ取得は担当しません。
 - 単一バイナリ内の実装なので、外部公開用のライブラリ API や Cargo workspace は設けていません。内部サブモジュール間の公開範囲は必要な範囲に限定します。
 
 ## 変更する場所の目安
@@ -73,6 +75,7 @@ docs/                      設計・仕様・開発手順
 | 変更内容 | 主な対象 |
 | --- | --- |
 | コマンド／オプションの追加 | `cli.rs`、`app.rs`、`commands/` または `install/mod.rs` |
+| CLI の色・表・進捗・view の整形 | `util/style/` |
 | 解決結果・巻き上げ・peer の不具合 | `install/resolver.rs`、`install/resolver/peers.rs`、`lockfile.rs` |
 | tarball・integrity・展開済みキャッシュ | `install/store.rs` |
 | no-op install・hidden lockfile・bin・フック | `install/tree.rs`、`scripts.rs` |

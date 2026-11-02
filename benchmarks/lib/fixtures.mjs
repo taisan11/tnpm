@@ -84,6 +84,14 @@ export async function createFixture({ live = false } = {}) {
         name: 'bench-app', version: '1.0.0', lockfileVersion: 3, requires: true,
         packages: { '': { name: 'bench-app', version: '1.0.0', dependencies }, ...packages },
       });
+      const compact = Object.fromEntries(Object.entries(packages).map(([path, entry]) => {
+        const { version, resolved, integrity, ...extra } = entry;
+        return [path, [version, resolved, integrity, extra]];
+      }));
+      await writeJson(join(cwd, 'tnpm-lock.json'), {
+        tnpmLockfileVersion: 1,
+        packages: { '': { name: 'bench-app', version: '1.0.0', dependencies }, ...compact },
+      });
     } else {
       await writeJson(join(cwd, 'package.json'), { name: 'bench-live', version: '1.0.0', private: true });
     }

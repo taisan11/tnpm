@@ -1348,12 +1348,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "noargs"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af5b13e43c3b5f1b4f2db60f5f03c803a04f5dd0a6fd44c83b5517ca1ec42ac4"
-
-[[package]]
 name = "nodejs-built-in-modules"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3043,7 +3037,6 @@ dependencies = [
  "httpdate",
  "libc",
  "mimalloc",
- "noargs",
  "nojson",
  "oxc_allocator",
  "oxc_codegen",

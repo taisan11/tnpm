@@ -176,7 +176,7 @@ pub(super) async fn resolve(
                         .get(&from)
                         .is_some_and(|v| flag(v, "optional"))
                 {
-                    crate::progress::message(format_args!(
+                    crate::util::style::progress::message(format_args!(
                         "tnpm: skipped optional {}: {}",
                         dep.name,
                         errors

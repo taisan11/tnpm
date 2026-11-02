@@ -59,7 +59,7 @@ node --test benchmarks/tests/install-fixture.test.mjs
 ```
 
 - 対象は [honojs/starter の cloudflare-workers](https://github.com/honojs/starter/tree/main/templates/cloudflare-workers)。`main` を1回コミット SHA に固定してテンプレート全ファイルを取得し、Git blob checksum を検証します。元の `package.json` は変更しません。
-- npm で v3 lockfile を一度作り、同じ依存グラフを両者に渡します。npm は準備にのみ使い、計測しません。Bun と tnpm の native lockfile への変換は warmup 中です。各 CLI の lockfile は以後保持します。
+- npm で v3 lockfile を作り Bun に渡します。npm は準備にのみ使い、計測しません。tnpm は warmup 中に独自に依存を解決します。各 CLI の lockfile は以後保持し、インストール結果の一致を検証します。
 - HOME / キャッシュ / npmrc を両者で分離し、各 CLI・各ケースで2回以上 warmup。通常ケースは初回のみ公開レジストリへの通信を許し、計測は **両 CLI に `--offline`** を指定します。ただし lifecycle script の通信は制限していません。cold Bun + tnpm ケースは両方のキャッシュ削除後に毎回レジストリへ接続します。HTTP 回数は外部計測していません。
 - `clean install / warm cache`: 各回 `node_modules` だけを削除し再構築します。削除時間は計測外です。
 - `clean install / cold Bun + tnpm caches`: 各 Bun / tnpm 実行の前に両者の install cache 全体を削除して、レジストリから再取得します。Bun と tnpm の cold install を同じ条件で比較します。通信時間を含みます。
@@ -68,7 +68,7 @@ node --test benchmarks/tests/install-fixture.test.mjs
 - 既定10サンプル、並列数1、ラウンドごとに実行順をローテーション。`hrtime.bigint()` による subprocess wall-clock で、起動と出力読み取りを含みます。setup / warmup / 削除 / 検証は含みません。較正呼び出しや外れ値除外はありません。
 - 毎回、インストール済み name/version の multiset が両者で一致すること、manifest が変わらないこと、Hono を実際に import できることを計測外で検証します。
 - Bun と tnpm は展開済みキャッシュを利用しますが、キャッシュ形式・検証・clone/link の実装は異なります。OS のファイルキャッシュも warm です。
-- 結果は `results/install-tnpm-bun-scripts.md` / `.json`。取得コミット・manifest・共通 lockfile・実行コマンド・ツールのバージョン・tnpm バイナリの checksum・全サンプルを保存します。`--output=PREFIX` で別名に保存できます。
+- 結果は `results/install-tnpm-bun-scripts.md` / `.json`。取得コミット・manifest・npm の基準 lockfile・実行コマンド・ツールのバージョン・tnpm バイナリの checksum・全サンプルを保存します。`--output=PREFIX` で別名に保存できます。
 
 [過去のスクリプト無効時の実測結果](results/install-cloudflare-workers.md)
 
@@ -82,7 +82,7 @@ node benchmarks/graph.mjs --before=BASELINE_BINARY --output=benchmarks/results/g
 node benchmarks/graph.mjs --before=BASELINE_BINARY --mode=noop --output=benchmarks/results/graph-layout-noop.json
 ```
 
-- 同じ合成 v3 lockfile を2つの tnpm バイナリへ渡し、起動から完了までを測定します。既定は100 / 1,000 / 5,000パッケージ、各15サンプル・warmup 2回です。`--sizes=37,100,1000,5000` / `--samples=N` / `--after=PATH` で変更できます。
+- 同じ合成 tnpm lockfile を2つの tnpm バイナリへ渡し、起動から完了までを測定します。既定は100 / 1,000 / 5,000パッケージ、各15サンプル・warmup 2回です。`--sizes=37,100,1000,5000` / `--samples=N` / `--after=PATH` で変更できます。
 - スコープ付き・循環・共有依存（最大4辺/パッケージ）と production / dev / optional のルートを含みます。実プロジェクトや新規バージョン解決のベンチマークではありません。
 - `lock`（既定）は `install --package-lock-only`、`noop` は fixture に生成済みの `node_modules` を残す通常の `install`。どちらも `--offline --ignore-scripts --json` を指定し、ダウンロード・展開は行いません。
 - 各回の入力 lockfile 復元、fixture 作成、結果検証は計測外。変更前後の順番を交互にし、manifest と出力 lockfile（全依存フラグを含む）の一致を毎回検証します。no-op は hidden lockfile の内容も検証します。

@@ -35,9 +35,9 @@ pub fn run(root: &Path, options: &Options) -> Result<()> {
     } else {
         println!(
             "{}",
-            crate::style::stdout(
+            crate::util::style::stdout(
                 &format!("Wrote {}", root.join("package.json").display()),
-                crate::style::Tone::Success
+                crate::util::style::Tone::Success
             )
         );
     }

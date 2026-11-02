@@ -8,14 +8,14 @@ mod json;
 mod lockfile;
 mod manifest;
 mod profile;
-mod progress;
 mod registry;
 mod runner;
 mod scripts;
 mod semver;
 mod spec;
-mod style;
-mod table;
+mod util;
+
+use util::style::{self, progress};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

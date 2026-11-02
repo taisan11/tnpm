@@ -56,16 +56,16 @@ fn render<const N: usize>(
                 output.push(' ');
             }
             let tone = if row_index == 0 || i == 0 {
-                crate::style::Tone::Accent
+                crate::util::style::Tone::Accent
             } else if matches!(*cell, "MISSING" | "REMOVED") {
-                crate::style::Tone::Error
+                crate::util::style::Tone::Error
             } else if i + 1 == N {
-                crate::style::Tone::Success
+                crate::util::style::Tone::Success
             } else {
-                crate::style::Tone::Warning
+                crate::util::style::Tone::Warning
             };
             if colors {
-                output.push_str(&crate::style::stdout(cell, tone));
+                output.push_str(&crate::util::style::stdout(cell, tone));
             } else {
                 output.push_str(cell);
             }

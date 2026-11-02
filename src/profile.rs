@@ -55,7 +55,10 @@ impl Drop for Profile {
                 "total_ms",
                 Value::Number(format!("{:.6}", started.elapsed().as_secs_f64() * 1000.0)),
             );
-            crate::progress::message(format_args!("tnpm-profile: {}", nojson::Json(&self.values)));
+            crate::util::style::progress::message(format_args!(
+                "tnpm-profile: {}",
+                nojson::Json(&self.values)
+            ));
         }
     }
 }

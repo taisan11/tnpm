@@ -94,7 +94,7 @@ try {
     scripts: 'enabled under each tool’s default policy; Bun blocks untrusted dependency scripts', network: 'measurement is offline except the paired cold Bun/tnpm cache case; requests not externally counted',
     timing: 'fresh subprocess wall time including startup and output draining; cleanup, validation, setup and warmup excluded',
     cache: 'separate temporary HOME and package cache per tool; paired cold Bun/tnpm case clears both install caches and allows network; OS file cache warm',
-    lockfiles: 'one npm-generated v3 graph shared by both tools; Bun and tnpm import it to native locks during warmup; lockfiles retained' };
+    lockfiles: 'npm-generated v3 graph used by npm and Bun; tnpm resolves independently during warmup; installed versions are validated; lockfiles retained' };
   const ms = ns => (ns / 1e6).toFixed(3);
   const markdown = [ '# Cloudflare Workers template — warm-cache install benchmark', '',
     `Measured: ${metadata.measuredAt}`, '', `- Template: ${SOURCE}`, `- Commit: \`${fixture.commit}\``,

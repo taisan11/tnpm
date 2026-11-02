@@ -1,5 +1,5 @@
 //! Global tnpm cache inspection and removal. Never follow cache symlinks.
-use crate::{cli::Options, json::Value, table};
+use crate::{cli::Options, json::Value, util::style::table};
 use anyhow::{Context, Result, bail};
 use std::{
     fs, io,
@@ -214,13 +214,13 @@ pub fn run(options: &Options) -> Result<()> {
         } else {
             println!(
                 "{}",
-                crate::style::stdout(
+                crate::util::style::stdout(
                     if removed.is_empty() {
                         "No tnpm caches to remove."
                     } else {
                         "Removed all tnpm caches."
                     },
-                    crate::style::Tone::Success,
+                    crate::util::style::Tone::Success,
                 )
             );
         }

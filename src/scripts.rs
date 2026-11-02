@@ -86,7 +86,7 @@ fn command_output(
     if stdout_to_stderr {
         child.stdout(std::process::Stdio::from(std::io::stderr()));
     }
-    let status = if crate::progress::active() {
+    let status = if crate::util::style::progress::active() {
         streaming_status(&mut child, stdout_to_stderr)
     } else {
         child.status().map_err(Into::into)
@@ -112,7 +112,7 @@ fn forward_output(
         }
         let mut open = line_open.lock().unwrap_or_else(|e| e.into_inner());
         if terminal {
-            crate::progress::finish();
+            crate::util::style::progress::finish();
         }
         output.write_all(&buffer[..length])?;
         output.flush()?;
@@ -155,7 +155,7 @@ fn streaming_status(command: &mut Command, stdout_to_stderr: bool) -> Result<Exi
         Ok(status)
     });
     if *line_open.lock().unwrap_or_else(|e| e.into_inner()) {
-        crate::progress::message(format_args!(""));
+        crate::util::style::progress::message(format_args!(""));
     }
     result
 }
