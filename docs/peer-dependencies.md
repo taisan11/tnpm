@@ -33,7 +33,7 @@
 
 ## lockfile と実装
 
-- `peerDependencies` / `peerDependenciesMeta` を lockfile v3 に保存します。
+- `peerDependencies` / `peerDependenciesMeta` を `tnpm-lock.json` に保存します。
 - 到達経路から `peer` / `dev` / `optional` / `devOptional` を計算します。peer と通常依存の両方から使われるものを peer 専用と誤分類しません。
 - peer のない解決は並列の通常経路を使用します。peer set の解決ではネットワーク取得を探索から切り離し、候補メタデータを実行内で共有・並列取得します。
 - 既存の有効な lockfile は再探索せず利用します。完全な解決前に manifest やインストール済みツリーを書き換えません。
@@ -41,11 +41,10 @@
 
 ## 検証と境界
 
-ローカルレジストリを使った結合テストで、必須自動取得、optional の未取得と存在時競合、共有範囲の再探索、異なる peer set の分離、consumer のバージョン再選択、循環、スコープ、競合ポリシー、ci の事前検証、omit、offline 再構築を確認しています。npm との scoped/cyclic peer lockfile 相互読み込みも別テストで確認します。
+ローカルレジストリを使った結合テストで、必須自動取得、optional の未取得と存在時競合、共有範囲の再探索、異なる peer set の分離、consumer のバージョン再選択、循環、スコープ、競合ポリシー、ci の事前検証、omit、offline 再構築を確認しています。npm の lockfile は読み込みません。
 
 ```sh
 cargo test
-cargo test --test commands npm_and_tnpm_share_scoped_cyclic_peer_sets_and_optional_peer_metadata -- --ignored
 ```
 
 これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspaces / file / Git / URL など、パッケージマネージャー全体で未対応の依存形式は peer に指定しても未対応です。

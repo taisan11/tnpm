@@ -38,14 +38,6 @@ cargo test --test commands commands::peers::
 cargo test --test commands commands::registry::
 ```
 
-Node.js / npm を必要とする相互互換テストは `tests/commands/npm_compat.rs` に分離し、既定で無効です。これらもローカルレジストリのみを使います。
-
-```sh
-cargo test --test commands npm_and_tnpm_can_share_v3_lockfiles -- --ignored
-cargo test --test commands npm_and_tnpm_share_scoped_cyclic_peer_sets_and_optional_peer_metadata -- --ignored
-cargo test --test commands commands::npm_compat:: -- --ignored # 2件まとめて実行
-```
-
 ## ベンチマーク用テスト
 
 ベンチマークは `benchmarks/package.json` / `package-lock.json` で管理する独立した Node.js パッケージです。本体の Cargo 依存には追加しません。実測の入口は `benchmarks/*.mjs`、共通の fixture / process / stats は `benchmarks/lib/`、テストは `benchmarks/tests/` です。

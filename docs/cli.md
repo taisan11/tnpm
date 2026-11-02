@@ -44,7 +44,7 @@ tnpm ls --depth=1 --json
 | `cache [rm]` | tnpm キャッシュ容量を表示、または `rm` で全 tnpm キャッシュを削除。 |
 | `upgrade` | tnpm 自身を GitHub Release の最新安定版へ更新。引数なし。 |
 
-詳細な制約や例は [README](../README.md#コマンド)、出力形式は [CLI 出力](cli-output.md) を参照してください。
+詳細な制約や例は [コマンドリファレンス](commands.md)、出力形式は [CLI 出力](cli-output.md) を参照してください。
 
 ## 共通オプション
 
