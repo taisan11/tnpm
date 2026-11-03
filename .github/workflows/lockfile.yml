@@ -1,0 +1,19 @@
+name: Cargo lockfile
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Cargo.lock matches Cargo.toml
+        run: cargo metadata --locked --format-version 1 > /dev/null

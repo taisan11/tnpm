@@ -19,6 +19,8 @@ cargo test --all-targets
 
 `Cargo.toml` のバージョンと `Cargo.lock` を更新・コミットし、同じバージョンのタグ（例：`v0.1.1`）を push すると、GitHub Actions の Release がビルドと公開を行います。Actions から手動実行する場合も、実行対象に同じタグを選択してください。タグと Cargo のバージョンが一致しなければ公開しません。タグにはワークフロー自体を含めてください。既存リリースの上書きは行いません。
 
+バージョンを変更したら `cargo check` を実行して `Cargo.lock` も更新し、両ファイルをコミットしてください。タグ付け前に `cargo metadata --locked --format-version 1` で整合性を確認できます。通常のブランチ push と pull request でも Actions が同じチェックを実行します。タグ push 後に修正した場合、失敗した run の再実行は元のコミットを使うため、修正済みコミットを指す新しいタグが必要です。
+
 GitHub Release には実行ファイルと `SHA256SUMS` が公開されます。対象は Linux GNU x86_64 / aarch64（glibc 2.35 以降）、macOS x86_64 / aarch64、Windows x86_64 MSVC です。必要な実行ファイルをダウンロードして `tnpm`（Windows は `tnpm.exe`）にリネームし、Unix では実行権限を付けて PATH に配置してください。各環境で `tnpm upgrade` が最新の安定版に更新します。プレリリースタグは GitHub の prerelease として公開し、通常の `upgrade` 対象にはしません。
 
 ## Rust テスト
