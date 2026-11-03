@@ -15,5 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-bin: false
       - name: Check Cargo.lock matches Cargo.toml
         run: cargo metadata --locked --format-version 1 > /dev/null
