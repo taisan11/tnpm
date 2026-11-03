@@ -9,4 +9,8 @@ mod peers;
 mod project;
 mod registry;
 mod runner;
+#[cfg(not(windows))]
+mod shell_alias;
 mod update;
+#[cfg(windows)]
+mod windows_alias;

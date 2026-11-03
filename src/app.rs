@@ -10,6 +10,9 @@ pub fn run() -> Result<()> {
     if options.command == "cache" {
         return commands::cache::run(&options);
     }
+    if options.command == "alias" {
+        return commands::alias::run(&options);
+    }
     if options.command == "upgrade" {
         return tokio::runtime::Builder::new_current_thread()
             .enable_all()

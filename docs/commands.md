@@ -19,6 +19,8 @@ tnpm update                      # 宣言済みの範囲内で更新
 tnpm update --latest             # major を含め latest へ更新し package.json も変更
 tnpm update astro --latest       # 指定した直接依存だけ latest へ更新
 tnpm upgrade                     # tnpm 自体を最新の GitHub Release に更新
+tnpm alias create                # npm を tnpm のシェルエイリアスにする
+tnpm alias delete                # tnpm が追加したエイリアス設定を削除
 tnpm prune --omit=dev            # 余剰依存・開発専用依存を削除
 tnpm prune --all                 # node_modules 全体を削除（-a も可）
 tnpm run build -- --watch        # prebuild / build / postbuild
@@ -58,6 +60,8 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 - `uninstall` / `remove` / `rm`: 宣言と不要な推移依存・bin を削除。`update [PACKAGE...]` は宣言範囲を変えず、対象とその解決結果を更新。`outdated [PACKAGE...]` は直接依存を調べ、更新候補があれば終了コード 1。表示幅に合わせた表（Unicode 対応）と `--json` に対応し、`npm:` エイリアスは参照先の wanted / latest を調べます。`prune [PACKAGE...]` は通信せず余剰パッケージを削除。
 - `update [PACKAGE...] --latest`: 直接依存（dependencies / devDependencies / optionalDependencies）を参照先の `latest` タグへ major を含めて更新し、解決成功後に `package.json` と lockfile を保存します。exact / `^` / `~` の形式と `npm:` エイリアス・依存区分を維持し、`-E` で exact を強制できます。`--no-save` / `--package-lock-only` も利用できます。既存 peer のバージョン不一致はデフォルトで警告して続行します。厳密に検証する場合は `--strict-peer-deps` を指定してください。実行時の API 互換性までは保証しません。
 - `upgrade`: [GitHub Release](https://github.com/taisan11/tnpm/releases) の最新の安定版を取得し、GitHub API の SHA-256 digest を検証してから現在の実行ファイルを置き換えます。引数はなく、同じまたは古いバージョンへの置換は行いません。`--json` に対応。macOS/Linux は一時ファイルから置換、Windows は実行中の旧ファイルを退避し、終了後に別プロセスで後片付けします。インストール先の書き込み権限が必要です。対応バイナリとリリース手順は [開発手順](development.md#リリース) を参照してください。
+- `alias create` / `alias delete`: Unix では `$SHELL` が bash、zsh、fish の場合、そのシェルの設定に `alias npm='tnpm'` を追加 / tnpm が追加した部分のみ削除します。対象は bash の `~/.bashrc`、zsh の `${ZDOTDIR:-$HOME}/.zshrc`、fish の `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish` です。設定ファイルが読み込まれる新しい対話シェルで反映され、スクリプトや非対話シェルの npm は置き換えません。
+- Windows では `tnpm.exe` と同じディレクトリに `npm.cmd` / `npm.ps1` と復元用ファイルを作成し、ユーザー PATH の先頭に移します。管理者権限は不要です。既存ファイルは上書きせず、削除時には作成したファイルだけを消します。PATH が作成後に変更されていなければ元に戻し、変更済みならそのまま残します。システム PATH はユーザー PATH より優先されるため、システム PATH 内の npm やシェルのエイリアスが優先される場合があります。PowerShell の実行ポリシーによっては `npm.ps1` を実行できません。変更後は新しいターミナルを開いてください。元の npm 本体は変更せず、tnpm は npm の完全互換ではありません。
 - `run [SCRIPT] [-- ARGS...]`: 省略時はスクリプト一覧。祖先の `node_modules/.bin` を PATH に追加し、pre/post フック、`--if-present`、子プロセスの終了コードをサポート。`--ignore-scripts` は pre/post のみ無効化し、明示したスクリプトは実行します。スクリプト名より後の引数は tnpm のオプションとして解釈しません。
 - `exec` / `x`: ローカル bin を優先し、なければ `~/.tnpm/exec/` に隔離して自動取得・実行。`--package`（複数可）、`--call` / `-c` をサポート。確認プロンプトはなく `--yes` は互換フラグです。実行パッケージはキャッシュに固定し、`--no-cache` で再解決できます。
 - `init [PATH] [-y]`: PATH は必ずローカルの作成先ディレクトリです（省略時は現在地）。必要ならディレクトリを作成し、package.json の既定値を補完し、既存のフィールドを維持します。`--prefix` 指定時の相対 PATH はその配下です。パッケージ取得や `create-*` 実行は行いません。

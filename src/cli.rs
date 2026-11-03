@@ -62,9 +62,10 @@ const COMMANDS: &[&str] = &[
     "update",
     "prune",
     "run",
+    "alias",
 ];
 
-const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  ci, init\n  create\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --userconfig <PATH>  --globalconfig <PATH>  --latest\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --strict-peer-deps  --force, -f  --offline  --save-dev, -D\n  --save-optional, -O  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
+const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  ci, init\n  create\n  alias create, alias delete\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --userconfig <PATH>  --globalconfig <PATH>  --latest\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --strict-peer-deps  --force, -f  --offline  --save-dev, -D\n  --save-optional, -O  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
 
 /// Parse tnpm options until an operand starts a script or executable's arguments.
 pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Options>> {
@@ -192,6 +193,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
     }
     if options.command == "version" && options.arguments.len() > 1 {
         bail!("version accepts at most one version or release type");
+    }
+    if options.command == "alias"
+        && (options.arguments.len() != 1
+            || !matches!(options.arguments[0].as_str(), "create" | "delete")
+            || !options.passthrough.is_empty())
+    {
+        bail!("usage: tnpm alias <create|delete>");
     }
     if options.command == "upgrade"
         && (!options.arguments.is_empty() || !options.passthrough.is_empty())
