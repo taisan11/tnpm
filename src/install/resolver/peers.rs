@@ -11,6 +11,9 @@ use std::{
 
 type Key = (String, String);
 type Catalog = FxHashMap<Key, std::result::Result<Vec<Rc<Value>>, String>>;
+const SEARCH_LIMIT: usize = 200_000;
+const PREFERRED_SEARCH_LIMIT: usize = 20_000;
+const PREFERRED_BACKTRACK_LIMIT: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Edge {
@@ -52,6 +55,7 @@ struct Search<'a> {
     update: bool,
     targets: &'a [String],
     steps: usize,
+    backtracks: usize,
     error: String,
     allow_override: bool,
 }
@@ -103,6 +107,25 @@ fn edges(from: &str, data: &Value) -> Vec<Edge> {
 }
 
 impl Search<'_> {
+    fn retry_with_overrides(&mut self) -> bool {
+        if self.allow_override || !self.policy.allows_mismatch() {
+            return false;
+        }
+        let mut lock = Lockfile::default();
+        lock.packages
+            .insert("".into(), lockfile::root_entry(self.manifest));
+        self.state = State {
+            lock,
+            queue: edges("", self.manifest).into(),
+            overridden: BTreeSet::new(),
+        };
+        self.branches.clear();
+        self.steps = 0;
+        self.backtracks = 0;
+        self.allow_override = true;
+        true
+    }
+
     fn placements(&self, edge: &Edge) -> Vec<String> {
         let mut at = edge.from.as_str();
         if edge.dep.peer && !at.is_empty() {
@@ -194,6 +217,7 @@ impl Search<'_> {
     fn backtrack(&mut self) -> bool {
         while let Some(mut branch) = self.branches.pop() {
             if let Some(choice) = branch.choices.pop() {
+                self.backtracks += 1;
                 self.state = branch.before.clone();
                 self.apply(&branch.edge, choice);
                 if !branch.choices.is_empty() {
@@ -208,7 +232,16 @@ impl Search<'_> {
     fn advance(&mut self) -> Step {
         loop {
             self.steps += 1;
-            if self.steps > 200_000 {
+            let limit = if !self.allow_override && self.policy.allows_mismatch() {
+                PREFERRED_SEARCH_LIMIT
+            } else {
+                SEARCH_LIMIT
+            };
+            if self.steps > limit
+                || (!self.allow_override
+                    && self.policy.allows_mismatch()
+                    && self.backtracks >= PREFERRED_BACKTRACK_LIMIT)
+            {
                 return Step::Failed(
                     "ERESOLVE: peer dependency search exceeded 200,000 decisions".into(),
                 );
@@ -336,7 +369,10 @@ impl Search<'_> {
                 && found.is_some()
                 && self.policy.allows_mismatch()
             {
-                choices.push(Choice::Override);
+                // The strict pass already searched for a compatible placement.
+                // Prefer the visible peer in the fallback rather than repeating
+                // the same potentially enormous search before trying an override.
+                choices.insert(0, Choice::Override);
             }
             self.error = if edge.dep.peer {
                 lockfile::peer_error(
@@ -405,6 +441,7 @@ pub(super) async fn resolve(
         update,
         targets: &ctx.options.arguments,
         steps: 0,
+        backtracks: 0,
         error: "ERESOLVE: unable to resolve peer dependencies".into(),
         allow_override: false,
     };
@@ -414,20 +451,7 @@ pub(super) async fn resolve(
             Step::Failed(error) => {
                 // Prefer a valid peer set, then allow mismatched existing versions
                 // with warnings unless strict peer validation was requested.
-                if !search.allow_override
-                    && search.policy.allows_mismatch()
-                    && search.steps <= 200_000
-                {
-                    let mut lock = Lockfile::default();
-                    lock.packages
-                        .insert("".into(), lockfile::root_entry(manifest));
-                    search.state = State {
-                        lock,
-                        queue: edges("", manifest).into(),
-                        overridden: BTreeSet::new(),
-                    };
-                    search.branches.clear();
-                    search.allow_override = true;
+                if search.retry_with_overrides() {
                     continue;
                 }
                 bail!("{error}");
@@ -455,5 +479,72 @@ pub(super) async fn resolve(
                 search.catalog.extend(responses);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn search(manifest: &Value, policy: lockfile::PeerPolicy) -> Search<'_> {
+        let mut lock = Lockfile::default();
+        lock.packages
+            .insert("".into(), lockfile::root_entry(manifest));
+        Search {
+            state: State {
+                lock,
+                queue: edges("", manifest).into(),
+                overridden: BTreeSet::new(),
+            },
+            branches: Vec::new(),
+            catalog: FxHashMap::default(),
+            manifest,
+            old: None,
+            policy,
+            update: false,
+            targets: &[],
+            steps: 0,
+            backtracks: 0,
+            error: String::new(),
+            allow_override: false,
+        }
+    }
+
+    #[test]
+    fn exhausted_preferred_search_retries_with_a_fresh_budget() {
+        let manifest = Value::parse(r#"{"dependencies":{"host":"1"}}"#).unwrap();
+        let mut search = search(&manifest, lockfile::PeerPolicy::default());
+        search.steps = PREFERRED_SEARCH_LIMIT;
+        assert!(matches!(search.advance(), Step::Failed(_)));
+        assert!(search.retry_with_overrides());
+        assert_eq!(search.steps, 0);
+        assert!(matches!(search.advance(), Step::Fetch(_)));
+        assert!(!search.retry_with_overrides());
+    }
+
+    #[test]
+    fn strict_search_does_not_fall_back() {
+        let manifest = Value::object();
+        let mut search = search(
+            &manifest,
+            lockfile::PeerPolicy {
+                strict: true,
+                ..Default::default()
+            },
+        );
+        search.steps = SEARCH_LIMIT;
+        assert!(matches!(search.advance(), Step::Failed(_)));
+        assert!(!search.retry_with_overrides());
+    }
+
+    #[test]
+    fn preferred_search_limits_backtracking_even_with_steps_remaining() {
+        let manifest = Value::parse(r#"{"dependencies":{"host":"1"}}"#).unwrap();
+        let mut search = search(&manifest, lockfile::PeerPolicy::default());
+        search.backtracks = PREFERRED_BACKTRACK_LIMIT;
+        assert!(matches!(search.advance(), Step::Failed(_)));
+        assert!(search.retry_with_overrides());
+        assert_eq!(search.backtracks, 0);
+        assert!(matches!(search.advance(), Step::Fetch(_)));
     }
 }
