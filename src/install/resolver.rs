@@ -69,6 +69,38 @@ fn matches(entry: &Value, name: &str, range: &str) -> bool {
     spec::satisfies(name, range, entry) == Some(true)
 }
 
+// A hoisted package must not shadow a previously satisfied dependency with an
+// incompatible version. Only packages below the candidate's parent can see it.
+fn preserves_dependencies(lock: &mut Lockfile, path: &str, entry: &Value, name: &str) -> bool {
+    let scope = lockfile::parent(path);
+    let affected: Vec<_> = lock
+        .packages
+        .iter()
+        .filter(|(from, _)| {
+            scope.is_empty()
+                || *from == scope
+                || from.starts_with(&format!("{scope}/node_modules/"))
+        })
+        .flat_map(|(from, data)| {
+            lockfile::dependencies(data, from.is_empty())
+                .into_iter()
+                .filter(|dep| !dep.peer && dep.name == name)
+                .filter(|dep| {
+                    lock.resolve(from, name)
+                        .is_some_and(|p| matches(&lock.packages[&p], name, &dep.spec))
+                })
+                .map(|dep| (from.clone(), dep))
+        })
+        .collect();
+    lock.packages.insert(path.to_owned(), entry.clone());
+    let valid = affected.iter().all(|(from, dep)| {
+        lock.resolve(from, name)
+            .is_some_and(|p| matches(&lock.packages[&p], name, &dep.spec))
+    });
+    lock.packages.remove(path);
+    valid
+}
+
 pub(super) async fn resolve(
     ctx: &Context<'_>,
     manifest: &Value,
@@ -196,17 +228,26 @@ pub(super) async fn resolve(
                 ancestors.push(lockfile::parent(ancestors.last().unwrap()));
             }
             // Hoist as far as possible without crossing a conflicting ancestor.
-            let mut location = lockfile::child(&from, &dep.name);
+            let mut location = None;
             for ancestor in &ancestors {
                 let candidate = lockfile::child(ancestor, &dep.name);
                 if let Some(existing) = lock.packages.get(&candidate) {
                     if matches(existing, &dep.name, &dep.spec) {
-                        location = candidate;
+                        location = Some(candidate);
                     }
                     break;
                 }
-                location = candidate;
+                if preserves_dependencies(&mut lock, &candidate, &entry, &dep.name) {
+                    location = Some(candidate);
+                } else {
+                    break;
+                }
             }
+            let Some(location) = location else {
+                // A greedy placement cannot preserve previously resolved edges.
+                // Let the joint resolver reconsider earlier placements.
+                return peers::resolve(ctx, manifest, old, update).await;
+            };
             if lock.packages.contains_key(&location) {
                 continue;
             }

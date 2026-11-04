@@ -36,9 +36,19 @@ impl<'a> Context<'a> {
         self.options.offline || self.config.enabled("offline")
     }
     pub(super) fn peer_policy(&self) -> lockfile::PeerPolicy {
+        let strict = self.options.strict_peer_deps || self.config.enabled("strict-peer-deps");
+        let legacy = self.options.legacy_peer_deps.unwrap_or_else(|| {
+            if self.options.strict_peer_deps {
+                false
+            } else if let Some(value) = self.config.get("legacy-peer-deps") {
+                value == "true"
+            } else {
+                !strict
+            }
+        });
         lockfile::PeerPolicy {
-            legacy: self.options.legacy_peer_deps || self.config.enabled("legacy-peer-deps"),
-            strict: self.options.strict_peer_deps || self.config.enabled("strict-peer-deps"),
+            legacy,
+            strict,
             force: self.options.force || self.config.enabled("force"),
         }
     }

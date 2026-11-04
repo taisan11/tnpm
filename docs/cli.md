@@ -74,8 +74,9 @@ tnpm ls --depth=1 --json
 | `--omit TYPES` | install / ci / update / prune で `dev`、`optional`、`peer` の配置を省略。カンマ区切りを指定可能（例 `--omit=dev,optional`）。lockfile から依存を削除する指定ではない。 |
 | `--production` | install 系で dev 依存の配置を省略。 |
 | `--ignore-scripts` | install 系ではライフサイクルフックを無効化。`run` では明示スクリプトを実行し pre/post のみ無効化。`version` でもフックを無効化。 |
-| `--legacy-peer-deps` | install 系で peer 依存の解決・検証を無効化。 |
-| `--strict-peer-deps` | install 系で peer バージョン不一致を警告でなくエラーにする。 |
+| `--legacy-peer-deps` | install 系で peer 依存の解決・検証を無効化（既定）。 |
+| `--no-legacy-peer-deps` | install 系で peer の自動解決・検証を有効化。不一致は警告。 |
+| `--strict-peer-deps` | peer 解決を有効化し、バージョン不一致をエラーにする。 |
 | `-f`, `--force` | install 系で strict 指定時も peer バージョン不一致を許可。必須 peer の欠落などは許可しない。 |
 | `--offline` | install 系でネットワーク取得にフォールバックしない。必要なキャッシュがなければエラー。`--no-cache` とは併用不可。 |
 | `--if-present` | `run` で指定したスクリプトがない場合に成功する。 |

@@ -175,6 +175,7 @@ fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
 #[cfg(unix)]
 fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer() {
     let f = Fixture::new();
+    f.file(".npmrc", "legacy-peer-deps=false\n");
     f.single("plugin", r#", "peerDependencies":{"host":"^1"}"#);
     let host = f.package("host", "2.0.0", "");
     f.registry("host", "2.0.0", &[("2.0.0", host)]);

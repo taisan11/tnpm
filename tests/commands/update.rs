@@ -192,6 +192,7 @@ fn update_latest_upgrades_peer_sets_when_new_versions_are_compatible() {
 #[test]
 fn update_latest_warns_by_default_and_strict_conflicts_do_not_mutate() {
     let f = Fixture::new();
+    f.file(".npmrc", "legacy-peer-deps=false\n");
     f.single("plugin", r#", "peerDependencies":{"host":"^1"}"#);
     f.releases("host", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
     let original = r#"{"dependencies":{"plugin":"^1.0.0","host":"^1.0.0"}}"#;

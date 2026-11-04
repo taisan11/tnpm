@@ -3,6 +3,41 @@ use crate::support::Fixture;
 use std::fs;
 
 #[test]
+fn hoisting_does_not_shadow_an_already_satisfied_dependency() {
+    let f = Fixture::new();
+    f.single("app", r#", "dependencies":{"y":"1","z":"1"}"#);
+    f.releases(
+        "y",
+        "2.0.0",
+        &[
+            ("1.0.0", r#", "dependencies":{"shared":"1"}"#),
+            ("2.0.0", ""),
+        ],
+    );
+    f.releases(
+        "z",
+        "2.0.0",
+        &[
+            ("1.0.0", r#", "dependencies":{"shared":"2"}"#),
+            ("2.0.0", ""),
+        ],
+    );
+    f.releases("shared", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    f.file(
+        "package.json",
+        r#"{"dependencies":{"app":"1","shared":"1","y":"2","z":"2"}}"#,
+    );
+    f.ok(&["update", "--legacy-peer-deps", "--ignore-scripts"]);
+    assert!(
+        f.root
+            .join("node_modules/app/node_modules/z/node_modules/shared/package.json")
+            .is_file()
+    );
+    assert!(!f.root.join("node_modules/app/node_modules/shared").exists());
+    f.ok(&["ci", "--legacy-peer-deps", "--ignore-scripts"]);
+}
+
+#[test]
 fn packages_without_integrity_never_reuse_extracted_cache() {
     let f = Fixture::new();
     f.package("app", "1.0.0", r#", "description":"first""#);
@@ -332,6 +367,7 @@ fn refuses_symlinked_node_modules_and_runs_dependency_hooks() {
 #[test]
 fn offline_install_reuses_packages_and_never_falls_back_to_network() {
     let f = Fixture::new();
+    f.file(".npmrc", "legacy-peer-deps=false\n");
     f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
     f.single("host", "");
     f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);

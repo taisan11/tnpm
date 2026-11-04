@@ -127,6 +127,7 @@ fn installing_an_alias_preserves_its_spec_and_real_package_identity() {
 #[test]
 fn transitive_aliases_with_different_targets_are_not_deduplicated_by_version() {
     let f = Fixture::new();
+    f.file(".npmrc", "legacy-peer-deps=false\n");
     f.single("one", "");
     f.single("two", "");
     f.single(

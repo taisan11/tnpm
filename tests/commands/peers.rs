@@ -2,9 +2,44 @@
 use crate::support::Fixture;
 use std::fs;
 
+fn peer_fixture() -> Fixture {
+    let f = Fixture::new();
+    f.file(".npmrc", "legacy-peer-deps=false\n");
+    f
+}
+
+#[test]
+fn peer_resolution_is_opt_in_and_cli_options_override_config() {
+    let f = Fixture::new();
+    f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
+    f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);
+    f.ok(&["update", "--latest", "--ignore-scripts"]);
+    assert!(!f.root.join("node_modules/host").exists());
+    f.ok(&["ci", "--ignore-scripts"]);
+    assert!(
+        !f.invoke(&["update", "--no-legacy-peer-deps", "--ignore-scripts"])
+            .status
+            .success()
+    );
+    assert!(
+        !f.invoke(&["update", "--strict-peer-deps", "--ignore-scripts"])
+            .status
+            .success()
+    );
+    f.file(".npmrc", "legacy-peer-deps=false\n");
+    assert!(!f.invoke(&["update", "--ignore-scripts"]).status.success());
+    f.ok(&["update", "--legacy-peer-deps", "--ignore-scripts"]);
+    f.file(".npmrc", "legacy-peer-deps=true\n");
+    assert!(
+        !f.invoke(&["update", "--strict-peer-deps", "--ignore-scripts"])
+            .status
+            .success()
+    );
+}
+
 #[test]
 fn required_peers_are_siblings_optional_peers_are_not_auto_installed() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single("plugin", r#", "peerDependencies":{"host":"^1","optional-host":"^1"},"peerDependenciesMeta":{"optional-host":{"optional":true}}"#);
     f.single("host", "");
     f.file("package.json", r#"{"devDependencies":{"plugin":"1"}}"#);
@@ -32,7 +67,7 @@ fn required_peers_are_siblings_optional_peers_are_not_auto_installed() {
 
 #[test]
 fn overlapping_peers_backtrack_to_a_shared_version_and_handle_cycles() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single(
         "alpha",
         r#", "peerDependencies":{"host":">=1 <3","beta":"^1"}"#,
@@ -53,7 +88,7 @@ fn overlapping_peers_backtrack_to_a_shared_version_and_handle_cycles() {
 
 #[test]
 fn direct_peer_conflicts_warn_by_default_and_strict_force_legacy_are_explicit() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single(
         "@scope/plugin",
         r#", "peerDependencies":{"host":"^1 || ^3"}"#,
@@ -88,7 +123,7 @@ fn direct_peer_conflicts_warn_by_default_and_strict_force_legacy_are_explicit() 
 
 #[test]
 fn root_peer_mismatches_warn_but_normal_dependency_ranges_are_not_relaxed() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.releases("host", "7.0.0", &[("4.0.0", ""), ("7.0.0", "")]);
     f.file(
         "package.json",
@@ -116,7 +151,7 @@ fn root_peer_mismatches_warn_but_normal_dependency_ranges_are_not_relaxed() {
 
 #[test]
 fn missing_required_peers_still_fail_in_permissive_mode() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single("plugin", r#", "peerDependencies":{"host":"^4"}"#);
     f.releases("host", "7.0.0", &[("7.0.0", "")]);
     let original = r#"{"dependencies":{"plugin":"1"}}"#;
@@ -154,7 +189,7 @@ fn strict_peer_policy_can_still_be_selected_in_npmrc() {
 
 #[test]
 fn optional_peer_is_checked_when_present_even_if_installed_later() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single(
         "aaa-plugin",
         r#", "peerDependencies":{"host":"^1"},"peerDependenciesMeta":{"host":{"optional":true}}"#,
@@ -195,7 +230,7 @@ fn optional_peer_is_checked_when_present_even_if_installed_later() {
 
 #[test]
 fn independent_peer_sets_are_nested_together_not_under_the_consumer() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single("a", r#", "dependencies":{"host":"1","plugin-one":"1"}"#);
     f.single("b", r#", "dependencies":{"host":"2","plugin-two":"1"}"#);
     f.single("plugin-one", r#", "peerDependencies":{"host":"1"}"#);
@@ -224,7 +259,7 @@ fn independent_peer_sets_are_nested_together_not_under_the_consumer() {
 
 #[test]
 fn peer_version_and_package_version_are_jointly_selected() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single("host", "");
     f.releases(
         "plugin",
@@ -248,7 +283,7 @@ fn peer_version_and_package_version_are_jointly_selected() {
 
 #[test]
 fn ci_rejects_peers_nested_under_their_consumer_before_removal() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single("host", "");
     f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
     f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);
@@ -266,7 +301,7 @@ fn ci_rejects_peers_nested_under_their_consumer_before_removal() {
 
 #[test]
 fn transitive_overrides_warn_by_default_but_strict_mode_rejects_them() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single(
         "a",
         r#", "peerDependencies":{"host":"2"},"dependencies":{"plugin":"1"}"#,
@@ -290,7 +325,7 @@ fn transitive_overrides_warn_by_default_but_strict_mode_rejects_them() {
 
 #[test]
 fn omit_peer_excludes_only_peer_only_packages_and_does_not_change_the_lock() {
-    let f = Fixture::new();
+    let f = peer_fixture();
     f.single(
         "plugin",
         r#", "peerDependencies":{"host":"1","shared":"1"}"#,
