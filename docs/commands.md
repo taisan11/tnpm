@@ -4,6 +4,8 @@
 
 ## コマンド一覧
 
+workspaces / ローカル・Git 依存 / overrides / engines / ネイティブ依存 / `-g` の詳細は [workspaces と依存ソース](dependency-sources.md) を参照してください。
+
 ```sh
 tnpm init -y                     # package.json を既定値で作成
 tnpm install                     # tnpm-lock.json / node_modules を生成
@@ -58,7 +60,7 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 - `install` / `i` / `add`: レジストリ依存を解決し、巻き上げ・競合時のネスト・スコープ付きパッケージ・循環参照に対応した `node_modules` を作成。`tnpm-lock.json` を使用し、npm の `package-lock.json` は読み書きしません。`--no-save` では生成しません。互換な lockfile があれば再解決せず利用します。`-D` / `-O` / `-E` / `--no-save` / `--package-lock-only` / `--omit=dev,optional` / `--production` / `--ignore-scripts` に対応。
 - `ci`: lockfile と manifest・依存の整合性を検証後、`node_modules` を削除・再構築。既存 lockfile と `package.json` は書き換えません。`tnpm-lock.json` が必要です。
 - `uninstall` / `remove` / `rm`: 宣言と不要な推移依存・bin を削除。`update [PACKAGE...]` は宣言範囲を変えず、対象とその解決結果を更新。`outdated [PACKAGE...]` は直接依存を調べ、更新候補があれば終了コード 1。表示幅に合わせた表（Unicode 対応）と `--json` に対応し、`npm:` エイリアスは参照先の wanted / latest を調べます。`prune [PACKAGE...]` は通信せず余剰パッケージを削除。
-- `update [PACKAGE...] --latest`: 直接依存（dependencies / devDependencies / optionalDependencies）を参照先の `latest` タグへ major を含めて更新し、解決成功後に `package.json` と lockfile を保存します。exact / `^` / `~` の形式と `npm:` エイリアス・依存区分を維持し、`-E` で exact を強制できます。`--no-save` / `--package-lock-only` も利用できます。peer は既定で検証せず、`--strict-peer-deps` で厳密な検証を有効にできます。実行時の API 互換性までは保証しません。
+- `update [PACKAGE...] --latest`: 直接依存（dependencies / devDependencies / optionalDependencies）を参照先の `latest` タグへ major を含めて更新し、解決成功後に `package.json` と lockfile を保存します。exact / `^` / `~` の形式と `npm:` エイリアス・依存区分を維持し、`-E` で exact を強制できます。`--no-save` / `--package-lock-only` も利用できます。peer の不一致は既定で警告し、`--strict-peer-deps` でエラーにできます。実行時の API 互換性までは保証しません。
 - `upgrade`: [GitHub Release](https://github.com/taisan11/tnpm/releases) の最新の安定版を取得し、GitHub API の SHA-256 digest を検証してから現在の実行ファイルを置き換えます。引数はなく、同じまたは古いバージョンへの置換は行いません。`--json` に対応。macOS/Linux は一時ファイルから置換、Windows は実行中の旧ファイルを退避し、終了後に別プロセスで後片付けします。インストール先の書き込み権限が必要です。対応バイナリとリリース手順は [開発手順](development.md#リリース) を参照してください。
 - `alias create` / `alias delete`: Unix では `$SHELL` が bash、zsh、fish の場合、そのシェルの設定に `alias npm='tnpm'` を追加 / tnpm が追加した部分のみ削除します。対象は bash の `~/.bashrc`、zsh の `${ZDOTDIR:-$HOME}/.zshrc`、fish の `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish` です。設定ファイルが読み込まれる新しい対話シェルで反映され、スクリプトや非対話シェルの npm は置き換えません。
 - Windows では `tnpm.exe` と同じディレクトリに `npm.cmd` / `npm.ps1` と復元用ファイルを作成し、ユーザー PATH の先頭に移します。管理者権限は不要です。既存ファイルは上書きせず、削除時には作成したファイルだけを消します。PATH が作成後に変更されていなければ元に戻し、変更済みならそのまま残します。システム PATH はユーザー PATH より優先されるため、システム PATH 内の npm やシェルのエイリアスが優先される場合があります。PowerShell の実行ポリシーによっては `npm.ps1` を実行できません。変更後は新しいターミナルを開いてください。元の npm 本体は変更せず、tnpm は npm の完全互換ではありません。
@@ -67,7 +69,7 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 - `init [PATH] [-y]`: PATH は必ずローカルの作成先ディレクトリです（省略時は現在地）。必要ならディレクトリを作成し、package.json の既定値を補完し、既存のフィールドを維持します。`--prefix` 指定時の相対 PATH はその配下です。パッケージ取得や `create-*` 実行は行いません。
 - `create NAME [ARGS...]`: `create-NAME` を取得・実行する独立したコマンドです。バージョン・タグ・スコープ付きパッケージを指定でき、NAME より後の引数は initializer へそのまま転送します（`--` は省略可）。tnpm 自体のオプションは NAME より前に指定します。NAME は必須で、`init` へのフォールバックはありません。
 - `outdated` の通常表示は枠付き・端末上では色付きの表です。`--plain` は従来の枠なし・色なし形式、`--json` は JSON です。色は `colored` を使用し、リダイレクト時は既定で無効、`NO_COLOR` でも無効化できます。
-- `peerDependencies`: 既定では自動取得・検証を行いません。`--no-legacy-peer-deps` で必須 peer の自動取得、peer set の共有・分離とバージョン再探索を有効にし、不一致は警告します。`--strict-peer-deps` では不一致を `ERESOLVE` にします。[仕様と検証範囲](peer-dependencies.md)。
+- `peerDependencies`: 既定で必須 peer を自動取得し、peer set の共有・分離とバージョン再探索を行い、不一致は警告します。`--legacy-peer-deps` で解決を無効化でき、`--strict-peer-deps` では不一致を `ERESOLVE` にします。[仕様と検証範囲](peer-dependencies.md)。
 - `ls`: `node_modules` を読み、巻き上げられた依存・スコープ付きパッケージ・循環参照に対応。必須依存の欠落やバージョン不一致は終了コード 1。デフォルトは直接依存のみ。
 - `fund`: インストール済み依存を再帰的に調べ、文字列・オブジェクト・配列形式の `funding` を表示。
 - `version`: 明示的な SemVer、`major`、`minor`、`patch`、`premajor`、`preminor`、`prepatch`、`prerelease`、`from-git` に対応。`tnpm-lock.json` があればルートのバージョンも同期。Git 管理下ではクリーンな状態を確認してコミット・注釈付きタグを作成します。`--no-git-tag-version` で無効化できます。`preversion` / `version` / `postversion` スクリプトは `--ignore-scripts` で無効化でき、同一バージョンへの更新は `--allow-same-version` で許可できます。

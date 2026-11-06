@@ -16,6 +16,9 @@ pub(super) struct Context<'a> {
     pub(super) progress: Progress,
     clients: RefCell<FxHashMap<(String, bool), reqwest::Client>>,
     versions: RefCell<PackageVersions>,
+    pub(super) source_root: RefCell<std::path::PathBuf>,
+    pub(super) workspaces: RefCell<Vec<crate::workspaces::Workspace>>,
+    node_version: RefCell<Option<Option<String>>>,
 }
 
 impl<'a> Context<'a> {
@@ -29,11 +32,20 @@ impl<'a> Context<'a> {
             )),
             clients: RefCell::new(FxHashMap::default()),
             versions: RefCell::new(FxHashMap::default()),
+            source_root: RefCell::new(std::env::current_dir().unwrap_or_default()),
+            workspaces: RefCell::new(Vec::new()),
+            node_version: RefCell::new(None),
         }
     }
 
     pub(super) fn offline(&self) -> bool {
         self.options.offline || self.config.enabled("offline")
+    }
+    pub(super) fn node_version(&self) -> Option<String> {
+        if self.node_version.borrow().is_none() {
+            *self.node_version.borrow_mut() = Some(super::platform::node_version());
+        }
+        self.node_version.borrow().as_ref().cloned().flatten()
     }
     pub(super) fn peer_policy(&self) -> lockfile::PeerPolicy {
         let strict = self.options.strict_peer_deps || self.config.enabled("strict-peer-deps");
@@ -43,7 +55,7 @@ impl<'a> Context<'a> {
             } else if let Some(value) = self.config.get("legacy-peer-deps") {
                 value == "true"
             } else {
-                !strict
+                false
             }
         });
         lockfile::PeerPolicy {
@@ -66,12 +78,17 @@ impl<'a> Context<'a> {
         manifest: &Value,
         event: &str,
     ) -> Result<()> {
-        if manifest.get("scripts").and_then(|s| s.str(event)).is_none() {
+        let native = event == "install" && scripts::implicit_native(root, manifest);
+        if manifest.get("scripts").and_then(|s| s.str(event)).is_none() && !native {
             return Ok(());
         }
         let label = format!("{} ({event})", root.display());
         self.progress.start("scripts", &label);
-        let result = scripts::lifecycle_output(root, manifest, event, self.options.json);
+        let result = if native {
+            scripts::native_build(root, manifest, self.options.json)
+        } else {
+            scripts::lifecycle_output(root, manifest, event, self.options.json)
+        };
         self.progress.finish(
             "scripts",
             &label,
@@ -114,6 +131,22 @@ impl<'a> Context<'a> {
         if !lockfile::valid_name(name) {
             bail!("invalid package name: {name}");
         }
+        let source_key = (name.to_owned(), spec.to_owned(), latest_only);
+        if let Some(versions) = self.versions.borrow().get(&source_key) {
+            return Ok(versions.clone());
+        }
+        if let Some(data) = super::sources::metadata(self, name, spec).await? {
+            let data = super::bundles::hydrate(self, data).await?;
+            let actual_name = data.str("name").map(str::to_owned);
+            let data = Rc::new(vec![data]);
+            if let Some(name) = actual_name {
+                self.versions
+                    .borrow_mut()
+                    .insert((name, spec.to_owned(), latest_only), data.clone());
+            }
+            self.versions.borrow_mut().insert(source_key, data.clone());
+            return Ok(data);
+        }
         let (name, spec) = spec::registry_dependency(name, spec)?;
         let key = (name.to_owned(), spec.to_owned(), latest_only);
         if let Some(versions) = self.versions.borrow().get(&key) {
@@ -143,7 +176,7 @@ impl<'a> Context<'a> {
                     registry::Query::versions(spec, latest_only),
                     self.options.no_cache || self.config.authenticated(&url),
                     || self.client(&url, false),
-                    Some(&self.progress),
+                    Some((&self.progress, name)),
                 )
                 .await
             }
@@ -155,7 +188,11 @@ impl<'a> Context<'a> {
             if result.is_ok() { "resolved" } else { "failed" },
         );
         let package = result?;
-        let versions = Rc::new(package.versions);
+        let mut hydrated = Vec::with_capacity(package.versions.len());
+        for data in package.versions {
+            hydrated.push(super::bundles::hydrate(self, data).await?);
+        }
+        let versions = Rc::new(hydrated);
         self.versions.borrow_mut().insert(key, versions.clone());
         Ok(versions)
     }

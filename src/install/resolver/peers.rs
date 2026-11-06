@@ -73,6 +73,12 @@ impl State {
             .is_some_and(|p| {
                 let entry = &self.lock.packages[&p];
                 accepts(entry, &edge.dep, catalog)
+                    && super::super::overrides::same_scope(
+                        self.lock.packages.get("").unwrap_or(&Value::Null),
+                        self.lock.packages.get(&edge.from),
+                        &edge.dep.name,
+                        entry,
+                    )
                     && (!edge.dep.peer
                         || edge.from.is_empty()
                         || !self
@@ -173,7 +179,7 @@ impl Search<'_> {
             .all(|dep| accepts(entry, dep, &self.catalog))
     }
 
-    fn apply(&mut self, edge: &Edge, choice: Choice) {
+    fn apply(&mut self, edge: &Edge, choice: Choice) -> Result<()> {
         match choice {
             Choice::Skip => {}
             Choice::Override => {
@@ -183,6 +189,12 @@ impl Search<'_> {
             }
             Choice::Place(path, entry) => {
                 let mut entry = (*entry).clone();
+                super::super::overrides::apply(
+                    self.manifest,
+                    self.state.lock.packages.get(&edge.from),
+                    &edge.dep.name,
+                    &mut entry,
+                )?;
                 if edge.dep.optional && !edge.dep.peer
                     || self
                         .state
@@ -194,6 +206,12 @@ impl Search<'_> {
                     entry.set("optional", Value::Bool(true));
                 }
                 let outgoing = edges(&path, &entry);
+                let bundled = super::super::bundles::insert(
+                    &mut self.state.lock,
+                    self.manifest,
+                    &path,
+                    &entry,
+                )?;
                 self.state.lock.packages.insert(path.clone(), entry);
                 // Changing visibility can activate an optional peer or shadow a
                 // previously satisfied peer. Recheck affected edges, not just new ones.
@@ -207,11 +225,16 @@ impl Search<'_> {
                         e.dep.name == edge.dep.name && !self.state.satisfied(e, &self.catalog)
                     })
                     .collect();
-                for e in outgoing.into_iter().chain(affected) {
+                for e in outgoing
+                    .into_iter()
+                    .chain(bundled.into_iter().map(|(from, dep)| Edge { from, dep }))
+                    .chain(affected)
+                {
                     self.state.enqueue(e);
                 }
             }
         }
+        Ok(())
     }
 
     fn backtrack(&mut self) -> bool {
@@ -219,7 +242,10 @@ impl Search<'_> {
             if let Some(choice) = branch.choices.pop() {
                 self.backtracks += 1;
                 self.state = branch.before.clone();
-                self.apply(&branch.edge, choice);
+                if let Err(error) = self.apply(&branch.edge, choice) {
+                    self.error = error.to_string();
+                    continue;
+                }
                 if !branch.choices.is_empty() {
                     self.branches.push(branch);
                 }
@@ -332,6 +358,7 @@ impl Search<'_> {
                         .iter()
                         .any(|s| spec::package_spec(s).is_ok_and(|(n, _)| n == edge.dep.name)));
             if !refresh
+                && self.manifest.get("overrides").is_none()
                 && let Some(old) = self.old
                 && let Some(path) = old.resolve_dependency(&edge.from, &edge.dep)
             {
@@ -406,7 +433,13 @@ impl Search<'_> {
             } else {
                 Some(self.state.clone())
             };
-            self.apply(&edge, choice);
+            if let Err(error) = self.apply(&edge, choice) {
+                self.error = error.to_string();
+                if self.backtrack() {
+                    continue;
+                }
+                return Step::Failed(self.error.clone());
+            }
             if let Some(before) = before {
                 self.branches.push(Branch {
                     before,

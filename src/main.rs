@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod config;
 mod fs;
+mod global;
 mod install;
 mod json;
 mod lockfile;
@@ -14,6 +15,7 @@ mod scripts;
 mod semver;
 mod spec;
 mod util;
+mod workspaces;
 
 use util::style::{self, progress};
 

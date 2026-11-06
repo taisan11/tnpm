@@ -28,7 +28,7 @@ fn dependencies<'a>(data: &'a Value, root: bool, out: &mut Vec<Dependency<'a>>) 
         ("devDependencies", DEV | DEV_OPTIONAL),
         ("optionalDependencies", OPTIONAL | DEV_OPTIONAL),
     ] {
-        if field == "devDependencies" && !root {
+        if field == "devDependencies" && !root && data.get("tnpmWorkspace").is_none() {
             continue;
         }
         for (name, value) in data.get(field).map(Value::members).unwrap_or_default() {

@@ -209,11 +209,6 @@ impl Progress {
         let mut renderer = RENDERER.lock().unwrap_or_else(|e| e.into_inner());
         let _ = renderer.render(&mut io::stderr().lock(), &line, columns);
     }
-
-    pub fn url(url: &reqwest::Url) -> String {
-        // Signed URL queries, fragments and URL credentials must not enter logs.
-        format!("{}{}", url.origin().ascii_serialization(), url.path())
-    }
 }
 
 impl Drop for Progress {
@@ -238,14 +233,6 @@ mod tests {
         let phases = p.phases.borrow();
         assert_eq!(phases["resolve"].discovered.len(), 2);
         assert_eq!(phases["resolve"].finished.len(), 1);
-    }
-
-    #[test]
-    fn logged_urls_do_not_expose_credentials_or_signed_queries() {
-        let url =
-            reqwest::Url::parse("https://user:password@registry.test/pkg.tgz?token=secret#private")
-                .unwrap();
-        assert_eq!(Progress::url(&url), "https://registry.test/pkg.tgz");
     }
 
     #[test]

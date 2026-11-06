@@ -2,6 +2,7 @@
 mod aliases;
 mod cache;
 mod config;
+mod extended_install;
 mod install;
 mod outdated;
 mod output;

@@ -1,6 +1,6 @@
 //! Tarball fetching, integrity checks, safe extraction, and copy-on-write caching.
 use super::context::Context;
-use crate::{fs::unique, json::Value, util::style::progress::Progress};
+use crate::{fs::unique, json::Value};
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256, Sha512};
@@ -11,7 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-fn verify(bytes: &[u8], integrity: Option<&str>) -> Result<()> {
+pub(super) fn verify(bytes: &[u8], integrity: Option<&str>) -> Result<()> {
     let Some(integrity) = integrity else {
         return Ok(());
     };
@@ -236,7 +236,7 @@ pub(super) fn cache_extracted_package(
     result
 }
 
-pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value) -> Result<Vec<u8>> {
+pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Result<Vec<u8>> {
     let resolved = entry
         .str("resolved")
         .context("lockfile package has no resolved tarball URL")?;
@@ -262,10 +262,8 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value) -> Result<Vec<u8>>
     if let Some(authorization) = authorization {
         request = request.header(reqwest::header::AUTHORIZATION, authorization);
     }
-    ctx.progress.event(
-        "prepare",
-        &format!("HTTP GET tarball {}", Progress::url(&url)),
-    );
+    ctx.progress
+        .event("prepare", &format!("HTTP GET tarball {name}"));
     let response = request.send().await?.error_for_status()?;
     if response.status() != reqwest::StatusCode::OK {
         bail!("unexpected tarball HTTP status: {}", response.status());

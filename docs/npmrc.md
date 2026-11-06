@@ -13,7 +13,7 @@
 5. `npm_config_*` 環境変数（接頭辞の大文字・小文字を区別しません）
 6. 対応する CLI オプション
 
-ユーザー設定の `prefix` / `globalconfig` からグローバル設定の場所を選択することもできます。npm 本体のインストール先にある builtin npmrc は読みません。グローバルインストールモードは未対応です。
+ユーザー設定の `prefix` / `globalconfig` からグローバル設定の場所を選択することもできます。npm 本体のインストール先にある builtin npmrc は読みません。`-g` の既定 prefix は管理者権限不要の `~/.tnpm/global` で、`--prefix` / `npm_config_prefix` / npmrc の `prefix` で変更できます。[グローバル配置](dependency-sources.md#グローバルインストール)。
 
 ### 書式
 

@@ -14,9 +14,13 @@ use rustc_hash::FxHashMap;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::Path};
 
+mod bundles;
 mod context;
+mod overrides;
+mod platform;
 mod report;
 mod resolver;
+mod sources;
 mod store;
 mod tree;
 mod update;
@@ -26,6 +30,22 @@ use resolver::{descriptor, resolve};
 use tree::materialize;
 
 const CONCURRENCY: usize = 16;
+
+pub(crate) fn workspace_manifest(root: &Path, data: &Value) -> Result<Value> {
+    sources::effective(root, data).map(|(data, _)| data)
+}
+
+pub(crate) fn listing_overrides(
+    root: &Value,
+    locked: Option<&Value>,
+    data: &mut Value,
+) -> Result<()> {
+    if let Some(scopes) = locked.and_then(|e| e.get("tnpmOverrideRules")) {
+        return overrides::apply_scoped(root, scopes.clone(), data);
+    }
+    let name = data.str("name").unwrap_or("").to_owned();
+    overrides::apply(root, None, &name, data)
+}
 
 fn flag(data: &Value, key: &str) -> bool {
     data.get(key) == Some(&Value::Bool(true))
@@ -61,6 +81,10 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         bail!("--offline and --no-cache cannot be combined");
     }
     let ctx = Context::new(options, config);
+    *ctx.source_root.borrow_mut() = fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+    if let Some(data) = manifest::read(root)? {
+        *ctx.workspaces.borrow_mut() = crate::workspaces::discover(root, &data)?;
+    }
     match options.command.as_str() {
         "exec" | "create" => return exec(&ctx, root).await,
         "outdated" => return outdated(&ctx, root).await,
@@ -74,14 +98,59 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         bail!("ci accepts neither packages nor --package-lock-only");
     }
     let mut manifest = manifest::read(root)?.unwrap_or_else(Value::object);
+    overrides::validate(&manifest)?;
     if options.command == "ci" && !root.join("package.json").is_file() {
         bail!("ci requires package.json");
     }
     let old = Lockfile::read(root)?;
     let mut memo = FxHashMap::default();
     if options.command == "ci" {
+        let (manifest, _) = sources::effective(root, &manifest)?;
         let lock = old.context("ci requires tnpm-lock.json")?;
         lock.validate_with(&manifest, ctx.peer_policy())?;
+        for (path, entry) in &lock.packages {
+            if entry.get("tnpmBundlePath").is_some()
+                || !entry
+                    .str("resolved")
+                    .is_some_and(|s| s.starts_with("file:"))
+            {
+                continue;
+            }
+            let name = entry.str("name").context("source lock entry has no name")?;
+            let spec = entry
+                .str("tnpmSpec")
+                .context("source lock entry has no spec")?;
+            let data = match ctx.metadata(name, spec).await {
+                Ok(data) => data,
+                Err(_) if flag(entry, "optional") => continue,
+                Err(error) => return Err(error),
+            };
+            let mut current = descriptor(&data)?;
+            if let Some(scopes) = entry.get("tnpmOverrideRules") {
+                overrides::apply_scoped(&manifest, scopes.clone(), &mut current)?;
+            } else {
+                overrides::apply(&manifest, None, name, &mut current)?;
+            }
+            for field in lockfile::DEP_FIELDS.iter().copied().chain([
+                "name",
+                "version",
+                "peerDependenciesMeta",
+                "integrity",
+                "engines",
+                "os",
+                "cpu",
+                "libc",
+                "bin",
+                "gypfile",
+                "hasInstallScript",
+            ]) {
+                if entry.get(field) != current.get(field) {
+                    bail!(
+                        "source package.json and lockfile disagree on {path} {field}; run install first"
+                    );
+                }
+            }
+        }
         materialize(&ctx, root, &manifest, &lock, true).await?;
         if !options.no_save && !root.join("tnpm-lock.json").try_exists()? {
             lock.write(root, &manifest)?;
@@ -94,90 +163,136 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         Some(if options.lock_only {
             old.clone().unwrap_or_default()
         } else {
-            tree::snapshot(root)?
+            tree::snapshot(&ctx, root)?
         })
     } else {
         None
     };
-    if options.command == "update" && options.latest {
-        memo = update::latest(&ctx, &mut manifest).await?;
-    } else if options.command == "uninstall" {
-        if options.arguments.is_empty() {
-            bail!("uninstall requires a package name");
-        }
-        for name in &options.arguments {
-            if !lockfile::valid_name(name) {
-                bail!("invalid package name: {name}");
+    let selected = if options.workspaces || !options.workspace.is_empty() {
+        crate::workspaces::selected(&ctx.workspaces.borrow(), &options.workspace)?
+            .iter()
+            .map(|w| root.join(&w.relative))
+            .collect::<Vec<_>>()
+    } else {
+        vec![root.to_owned()]
+    };
+    let mut edits = selected
+        .into_iter()
+        .map(|target| {
+            let data = manifest::read(&target)?.unwrap_or_else(Value::object);
+            Ok((target, data))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for (target, manifest) in &mut edits {
+        if options.command == "update" && options.latest {
+            memo.extend(update::latest(&ctx, manifest).await?);
+        } else if options.command == "uninstall" {
+            if options.arguments.is_empty() {
+                bail!("uninstall requires a package name");
             }
-            for field in lockfile::DEP_FIELDS {
-                if let Some(map) = manifest.get_mut(field) {
-                    map.remove(name);
+            for name in &options.arguments {
+                if !lockfile::valid_name(name) {
+                    bail!("invalid package name: {name}");
+                }
+                for field in lockfile::DEP_FIELDS {
+                    if let Some(map) = manifest.get_mut(field) {
+                        map.remove(name);
+                    }
                 }
             }
-        }
-    } else if options.command == "install" && !options.arguments.is_empty() {
-        let values: Vec<_> = stream::iter(options.arguments.iter().map(|spec| async {
-            let (name, selector) = spec::package_spec(spec)?;
-            let data = ctx
-                .metadata(
-                    name,
-                    selector.unwrap_or(config.get("tag").unwrap_or("latest")),
-                )
-                .await?;
-            Ok::<_, anyhow::Error>((name.to_owned(), selector.map(str::to_owned), data))
-        }))
-        .buffered(CONCURRENCY)
-        .collect()
-        .await;
-        for result in values {
-            let (name, selector, data) = result?;
-            let version = data
-                .str("version")
-                .context("registry version has no version")?;
-            let spec = if let Some(alias) = selector.as_deref().filter(|s| s.starts_with("npm:")) {
-                let (target, _) = spec::dependency_target(&name, alias)?;
-                if options.save_exact {
-                    format!("npm:{target}@{version}")
-                } else {
-                    alias.to_owned()
-                }
-            } else if options.save_exact {
-                version.to_owned()
-            } else {
-                selector
-                    .filter(|s| semver::satisfies(version, s).is_some())
-                    .unwrap_or_else(|| format!("^{version}"))
-            };
-            let field = if options.save_optional {
-                "optionalDependencies"
-            } else if options.save_dev {
-                "devDependencies"
-            } else {
-                ["dependencies", "devDependencies", "optionalDependencies"]
-                    .into_iter()
-                    .find(|f| manifest.get(f).and_then(|v| v.get(&name)).is_some())
-                    .unwrap_or("dependencies")
-            };
-            for other in ["dependencies", "devDependencies", "optionalDependencies"] {
-                if other != field
-                    && let Some(map) = manifest.get_mut(other)
+        } else if options.command == "install" && !options.arguments.is_empty() {
+            let values: Vec<_> = stream::iter(options.arguments.iter().map(|spec| async {
+                let (owned_name, owned_selector) = install_spec(&ctx, spec).await?;
+                let name = owned_name.as_str();
+                let selector = owned_selector.as_deref();
+                let data = ctx
+                    .metadata(
+                        name,
+                        selector.unwrap_or(config.get("tag").unwrap_or("latest")),
+                    )
+                    .await?;
+                Ok::<_, anyhow::Error>((name.to_owned(), selector.map(str::to_owned), data))
+            }))
+            .buffered(CONCURRENCY)
+            .collect()
+            .await;
+            for result in values {
+                let (name, selector, data) = result?;
+                let version = data
+                    .str("version")
+                    .context("registry version has no version")?;
+                let spec = if let Some(source) =
+                    selector.as_deref().filter(|s| sources::is_source(s))
                 {
-                    map.remove(&name);
+                    if let Some(path) = source.strip_prefix("file:") {
+                        let path = fs::canonicalize(ctx.source_root.borrow().join(path))?;
+                        format!(
+                            "file:{}",
+                            sources::relative(&fs::canonicalize(&*target)?, &path)
+                        )
+                    } else {
+                        source.to_owned()
+                    }
+                } else if let Some(alias) = selector.as_deref().filter(|s| s.starts_with("npm:")) {
+                    let (target, _) = spec::dependency_target(&name, alias)?;
+                    if options.save_exact {
+                        format!("npm:{target}@{version}")
+                    } else {
+                        alias.to_owned()
+                    }
+                } else if options.save_exact {
+                    version.to_owned()
+                } else {
+                    selector
+                        .filter(|s| semver::satisfies(version, s).is_some())
+                        .unwrap_or_else(|| format!("^{version}"))
+                };
+                let field = if options.save_optional {
+                    "optionalDependencies"
+                } else if options.save_dev {
+                    "devDependencies"
+                } else {
+                    ["dependencies", "devDependencies", "optionalDependencies"]
+                        .into_iter()
+                        .find(|f| manifest.get(f).and_then(|v| v.get(&name)).is_some())
+                        .unwrap_or("dependencies")
+                };
+                for other in ["dependencies", "devDependencies", "optionalDependencies"] {
+                    if other != field
+                        && let Some(map) = manifest.get_mut(other)
+                    {
+                        map.remove(&name);
+                    }
+                }
+                if manifest.get(field).is_none() {
+                    manifest.set(field, Value::object());
+                }
+                manifest
+                    .get_mut(field)
+                    .context("invalid dependency map")?
+                    .set(&name, Value::from(spec.as_str()));
+                if !sources::is_source(&spec) {
+                    memo.insert((name, spec), descriptor(&data)?);
                 }
             }
-            if manifest.get(field).is_none() {
-                manifest.set(field, Value::object());
-            }
-            manifest
-                .get_mut(field)
-                .context("invalid dependency map")?
-                .set(&name, Value::from(spec.as_str()));
-            memo.insert((name, spec), descriptor(&data)?);
         }
     }
+    for (target, data) in &edits {
+        if target == root {
+            manifest = data.clone();
+        } else if let Some(workspace) = ctx
+            .workspaces
+            .borrow_mut()
+            .iter_mut()
+            .find(|w| root.join(&w.relative) == *target)
+        {
+            workspace.manifest = data.clone();
+        }
+    }
+    let (effective, _) = sources::effective(root, &manifest)?;
     let lock = resolve(
         &ctx,
-        &manifest,
+        &effective,
         old.as_ref(),
         options.command == "update"
             || (options.command == "install" && !options.arguments.is_empty()),
@@ -189,9 +304,11 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
             || (options.command == "install" && !options.arguments.is_empty())
             || (options.command == "update" && options.latest)
         {
-            write_json(&root.join("package.json"), &manifest)?;
+            for (target, data) in &edits {
+                write_json(&target.join("package.json"), data)?;
+            }
         }
-        lock.write(root, &manifest)?;
+        lock.write(root, &effective)?;
     }
     if options.lock_only {
         ctx.warn_peers(&lock);
@@ -202,21 +319,53 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         }
         return Ok(());
     }
-    materialize(&ctx, root, &manifest, &lock, false).await?;
+    materialize(&ctx, root, &effective, &lock, false).await?;
     if let Some(before) = &before_update {
         ctx.progress.event(
             "place",
             "verifying installed versions for the update report",
         );
-        report::print(options, before, &tree::snapshot(root)?);
+        report::print(options, before, &tree::snapshot(&ctx, root)?);
     }
     Ok(())
+}
+
+async fn install_spec(ctx: &Context<'_>, argument: &str) -> Result<(String, Option<String>)> {
+    let selector = if argument.starts_with("./")
+        || argument.starts_with("../")
+        || Path::new(argument).is_absolute()
+    {
+        Some(format!("file:{argument}"))
+    } else if sources::is_source(argument) {
+        Some(argument.to_owned())
+    } else {
+        None
+    };
+    if let Some(selector) = selector {
+        let data = ctx.metadata("tnpm-source", &selector).await?;
+        return Ok((
+            data.str("name")
+                .context("source requires a name")?
+                .to_owned(),
+            Some(selector),
+        ));
+    }
+    let (name, selector) = spec::package_spec(argument)?;
+    Ok((name.to_owned(), selector.map(str::to_owned)))
 }
 
 async fn outdated(ctx: &Context<'_>, root: &Path) -> Result<()> {
     let manifest = manifest::read(root)?.context("package.json not found")?;
     let deps: Vec<_> = lockfile::dependencies(&manifest, true)
         .into_iter()
+        .filter(|d| !sources::is_source(&d.spec))
+        .filter(|d| {
+            !ctx.workspaces.borrow().iter().any(|w| {
+                w.name == d.name
+                    && semver::satisfies(w.manifest.str("version").unwrap_or("0.0.0"), &d.spec)
+                        == Some(true)
+            })
+        })
         .filter(|d| ctx.options.arguments.is_empty() || ctx.options.arguments.contains(&d.name))
         .collect();
     let rows: Vec<_> = stream::iter(deps.into_iter().map(|dep| async move {

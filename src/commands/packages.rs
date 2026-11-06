@@ -18,6 +18,12 @@ struct Package {
     extraneous: bool,
 }
 
+struct Listing<'a> {
+    root: &'a Path,
+    manifest: &'a Value,
+    lock: Option<&'a crate::lockfile::Lockfile>,
+}
+
 fn valid_name(name: &str) -> bool {
     let parts: Vec<_> = name.split('/').collect();
     let safe = |part: &str| {
@@ -52,11 +58,31 @@ fn resolve(root: &Path, name: &str) -> Result<Option<PathBuf>> {
 fn build(
     path: &Path,
     name: &str,
-    data: Value,
+    mut data: Value,
     root: bool,
     stack: &mut HashSet<PathBuf>,
     used: &mut HashSet<PathBuf>,
+    listing: &Listing<'_>,
 ) -> Result<Package> {
+    if !root {
+        let location = path
+            .strip_prefix(listing.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let entry = listing
+            .lock
+            .and_then(|l| l.packages.get(&location))
+            .filter(|e| e.str("version") == data.str("version"));
+        if let Some(entry) = entry {
+            for field in ["tnpmWorkspace", "tnpmSpec"] {
+                if let Some(value) = entry.get(field) {
+                    data.set(field, value.clone());
+                }
+            }
+        }
+        crate::install::listing_overrides(listing.manifest, entry, &mut data)?;
+    }
     let canonical = fs::canonicalize(path)?;
     used.insert(canonical.clone());
     let mut package = Package {
@@ -110,7 +136,7 @@ fn build(
                     .is_file();
             let path = resolved;
             let data = manifest(&path)?.context("dependency disappeared while reading")?;
-            let mut child = build(&path, &name, data, false, stack, used)?;
+            let mut child = build(&path, &name, data, false, stack, used, listing)?;
             child.invalid =
                 nested_peer || spec::satisfies(&name, &spec, &child.manifest) == Some(false);
             child.name = name;
@@ -165,19 +191,35 @@ fn installed(root: &Path) -> Result<Vec<(String, PathBuf)>> {
 
 fn tree(root: &Path) -> Result<Package> {
     let data = manifest(root)?.unwrap_or_else(Value::object);
+    let data = crate::install::workspace_manifest(root, &data)?;
+    let lock = crate::lockfile::Lockfile::read(root)?;
+    let listing = Listing {
+        root,
+        manifest: &data,
+        lock: lock.as_ref(),
+    };
     let mut used = HashSet::new();
     let mut tree = build(
         root,
         root.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-        data,
+        data.clone(),
         true,
         &mut HashSet::new(),
         &mut used,
+        &listing,
     )?;
     for (name, path) in installed(root)? {
         if !used.contains(&fs::canonicalize(&path)?) {
             let data = manifest(&path)?.context("dependency disappeared while reading")?;
-            let mut child = build(&path, &name, data, false, &mut HashSet::new(), &mut used)?;
+            let mut child = build(
+                &path,
+                &name,
+                data,
+                false,
+                &mut HashSet::new(),
+                &mut used,
+                &listing,
+            )?;
             child.name = name;
             child.extraneous = true;
             tree.children.push(child);

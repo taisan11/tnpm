@@ -21,6 +21,10 @@ src/
     update.rs              update --latest の取得・宣言更新とエイリアス維持
     report.rs              更新前後の差分と結果表示（表 / JSON）
     context.rs             実行単位の設定・HTTP client・メタデータのメモ化
+    sources.rs             ローカル依存・workspace ソース・Git archive のコミット固定
+    bundles.rs             bundled dependency の manifest・物理配置と archive 内パス
+    overrides.rs           root overrides と論理祖先の条件伝播
+    platform.rs            os / cpu / libc・Node.js engines の検証
     resolver.rs            通常依存のバージョン解決と物理配置
     resolver/peers.rs       peer set の配置・バージョン探索
     store.rs               tarball の取得・検証・安全な展開・展開済みキャッシュ
@@ -35,10 +39,12 @@ src/
   manifest.rs              package.json の読み込みと検証
   semver.rs                SemVer の解析・比較・範囲・増分
   spec.rs                  パッケージ名とバージョン／タグ／範囲指定の解析
+  workspaces.rs            symlink を辿らない workspace 探索・選択
+  global.rs                ユーザー領域のグローバル配置・bin の所有管理
   util/style/
     mod.rs                 colored による stdout / stderr 別の色制御
     table.rs               Unicode 表示幅に基づく表の整形
-    progress.rs            stderr の段階別進捗と安全な URL 表示
+    progress.rs            stderr の段階別進捗表示
     view.rs                レジストリ情報の表示整形
   scripts.rs               共通のプロセス実行・フック・bin 探索
   fs.rs                    JSON の一時ファイル経由の保存と一意な識別子

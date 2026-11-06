@@ -29,8 +29,21 @@ pub(super) fn descriptor(data: &Value) -> Result<Value> {
             "os",
             "cpu",
             "funding",
+            "libc",
+            "gypfile",
+            "bundleDependencies",
+            "bundledDependencies",
+            "tnpmSpec",
+            "link",
+            "tnpmWorkspace",
+            "tnpmBundled",
         ],
     );
+    if data.get("tnpmWorkspace").is_some()
+        && let Some(dev) = data.get("devDependencies")
+    {
+        entry.set("devDependencies", dev.clone());
+    }
     let dist = data
         .get("dist")
         .context("registry version has no dist object")?;
@@ -59,6 +72,7 @@ pub(super) fn descriptor(data: &Value) -> Result<Value> {
     if ["preinstall", "install", "postinstall"]
         .iter()
         .any(|s| data.get("scripts").and_then(|v| v.str(s)).is_some())
+        || data.get("gypfile") == Some(&Value::Bool(true))
     {
         entry.set("hasInstallScript", Value::Bool(true));
     }
@@ -109,7 +123,11 @@ pub(super) async fn resolve(
     mut memo: FxHashMap<(String, String), Value>,
 ) -> Result<Lockfile> {
     ctx.progress.event("resolve", "checking dependency graph");
+    super::overrides::validate(manifest)?;
+    let has_sources = manifest.get("workspaces").is_some()
+        || old.is_some_and(|l| l.packages.values().any(|v| v.get("tnpmSpec").is_some()));
     if !update
+        && !has_sources
         && let Some(old) = old
         && old.validate_with(manifest, ctx.peer_policy()).is_ok()
     {
@@ -146,10 +164,15 @@ pub(super) async fn resolve(
             if !lockfile::valid_name(&dep.name) {
                 bail!("invalid dependency name: {}", dep.name);
             }
-            if lock
-                .resolve(from, &dep.name)
-                .is_some_and(|p| matches(&lock.packages[&p], &dep.name, &dep.spec))
-            {
+            if lock.resolve(from, &dep.name).is_some_and(|p| {
+                matches(&lock.packages[&p], &dep.name, &dep.spec)
+                    && super::overrides::same_scope(
+                        manifest,
+                        lock.packages.get(from),
+                        &dep.name,
+                        &lock.packages[&p],
+                    )
+            }) {
                 continue;
             }
             let key = (dep.name.clone(), dep.spec.clone());
@@ -160,12 +183,15 @@ pub(super) async fn resolve(
                         .arguments
                         .iter()
                         .any(|s| spec::package_spec(s).is_ok_and(|(n, _)| n == dep.name)));
-            let locked = (!refresh)
+            let locked = (!refresh && manifest.get("overrides").is_none())
                 .then(|| {
                     old.and_then(|l| l.resolve(from, &dep.name).map(|p| l.packages[&p].clone()))
                 })
                 .flatten()
-                .filter(|e| matches(e, &dep.name, &dep.spec));
+                .filter(|e| {
+                    matches(e, &dep.name, &dep.spec)
+                        && !e.str("resolved").is_some_and(|s| s.starts_with("file:"))
+                });
             if let Some(entry) = locked {
                 memo.entry(key).or_insert(entry);
             } else if !memo.contains_key(&key) {
@@ -197,6 +223,12 @@ pub(super) async fn resolve(
         for (from, dep) in pending {
             if let Some(path) = lock.resolve(&from, &dep.name)
                 && matches(&lock.packages[&path], &dep.name, &dep.spec)
+                && super::overrides::same_scope(
+                    manifest,
+                    lock.packages.get(&from),
+                    &dep.name,
+                    &lock.packages[&path],
+                )
             {
                 continue;
             }
@@ -232,7 +264,14 @@ pub(super) async fn resolve(
             for ancestor in &ancestors {
                 let candidate = lockfile::child(ancestor, &dep.name);
                 if let Some(existing) = lock.packages.get(&candidate) {
-                    if matches(existing, &dep.name, &dep.spec) {
+                    if matches(existing, &dep.name, &dep.spec)
+                        && super::overrides::same_scope(
+                            manifest,
+                            lock.packages.get(&from),
+                            &dep.name,
+                            existing,
+                        )
+                    {
                         location = Some(candidate);
                     }
                     break;
@@ -255,6 +294,10 @@ pub(super) async fn resolve(
                 bail!("dependency nesting exceeds 128 levels");
             }
             let mut entry = entry;
+            super::overrides::apply(manifest, lock.packages.get(&from), &dep.name, &mut entry)?;
+            next.extend(super::bundles::insert(
+                &mut lock, manifest, &location, &entry,
+            )?);
             if dep.optional
                 || lock
                     .packages

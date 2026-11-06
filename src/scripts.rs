@@ -173,6 +173,24 @@ pub fn lifecycle(root: &Path, manifest: &Value, event: &str) -> Result<()> {
     lifecycle_output(root, manifest, event, false)
 }
 
+pub fn implicit_native(root: &Path, manifest: &Value) -> bool {
+    root.join("binding.gyp").is_file()
+        && manifest.get("gypfile") != Some(&Value::Bool(false))
+        && ["install", "preinstall"]
+            .iter()
+            .all(|s| manifest.get("scripts").and_then(|v| v.str(s)).is_none())
+}
+
+pub fn native_build(root: &Path, manifest: &Value, json: bool) -> Result<()> {
+    let command = if let Some(path) = std::env::var_os("npm_config_node_gyp") {
+        format!("node {} rebuild", quote(&path.to_string_lossy()))
+    } else {
+        "node-gyp rebuild".to_owned()
+    };
+    command_output(root, manifest, "install", &command, &[], None, json)
+        .context("native build failed; install node-gyp, Python, and a C/C++ toolchain or set npm_config_node_gyp")
+}
+
 pub fn lifecycle_output(
     root: &Path,
     manifest: &Value,

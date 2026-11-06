@@ -29,31 +29,6 @@ fn retain_reachable(
     Ok(())
 }
 
-fn platform(data: &Value) -> bool {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        "windows" => "win32",
-        other => other,
-    };
-    let cpu = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        "x86" => "ia32",
-        other => other,
-    };
-    fn accepts(data: Option<&Value>, current: &str) -> bool {
-        let Some(Value::Array(values)) = data else {
-            return true;
-        };
-        let values: Vec<_> = values.iter().filter_map(Value::string).collect();
-        !values.iter().any(|v| *v == format!("!{current}"))
-            && (!values.iter().any(|v| !v.starts_with('!'))
-                || values.contains(&current)
-                || values.contains(&"any"))
-    }
-    accepts(data.get("os"), os) && accepts(data.get("cpu"), cpu)
-}
-
 fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
     let mut path = root.to_owned();
     for component in Path::new(relative).components() {
@@ -65,6 +40,46 @@ fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
                 "refusing to modify symlinked installation path: {}",
                 path.display()
             );
+        }
+    }
+    Ok(())
+}
+
+fn ensure_install_path(
+    ctx: &Context<'_>,
+    root: &Path,
+    relative: &str,
+    lock: &Lockfile,
+) -> Result<()> {
+    let mut current = root.to_owned();
+    let mut logical = String::new();
+    for component in Path::new(relative).components() {
+        current.push(component);
+        if !logical.is_empty() {
+            logical.push('/');
+        }
+        logical.push_str(&component.as_os_str().to_string_lossy());
+        if let Ok(meta) = fs::symlink_metadata(&current)
+            && meta.file_type().is_symlink()
+        {
+            let entry = lock
+                .packages
+                .get(&logical)
+                .filter(|e| flag(e, "link"))
+                .with_context(|| {
+                    format!(
+                        "refusing to modify symlinked installation path: {}",
+                        current.display()
+                    )
+                })?;
+            let target = super::sources::workspace_target(ctx, entry)?;
+            if fs::canonicalize(&current)? != target {
+                bail!(
+                    "workspace link points to an unexpected target: {}",
+                    current.display()
+                );
+            }
+            current = target;
         }
     }
     Ok(())
@@ -114,24 +129,28 @@ fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::Syste
     Some((packages, modified))
 }
 
-fn scan(root: &Path) -> Result<Lockfile> {
+fn scan(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     let cached = hidden_lock(root);
-    let result = scan_using(root, cached.as_ref().map(|(p, _)| p))?;
+    let result = scan_using(ctx, root, cached.as_ref().map(|(p, _)| p))?;
     // Any extra directory invalidates the *whole* hidden lock, not just that entry.
     if let Some((cached, _)) = cached
         && cached.keys().ne(result.packages.keys())
     {
-        return scan_using(root, None);
+        return scan_using(ctx, root, None);
     }
     Ok(result)
 }
 
-pub(super) fn snapshot(root: &Path) -> Result<Lockfile> {
+pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     ensure_safe_parents(root, "node_modules")?;
-    scan(root)
+    scan(ctx, root)
 }
 
-fn scan_using(root: &Path, cached: Option<&BTreeMap<String, Value>>) -> Result<Lockfile> {
+fn scan_using(
+    ctx: &Context<'_>,
+    root: &Path,
+    cached: Option<&BTreeMap<String, Value>>,
+) -> Result<Lockfile> {
     let mut lock = Lockfile::default();
     let mut queue = VecDeque::from([String::new()]);
     while let Some(parent) = queue.pop_front() {
@@ -143,6 +162,9 @@ fn scan_using(root: &Path, cached: Option<&BTreeMap<String, Value>>) -> Result<L
         };
         for entry in entries {
             let entry = entry?;
+            if !entry.file_type()?.is_dir() && !entry.file_type()?.is_symlink() {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
                 continue;
@@ -151,6 +173,9 @@ fn scan_using(root: &Path, cached: Option<&BTreeMap<String, Value>>) -> Result<L
             if name.starts_with('@') && !entry.file_type()?.is_symlink() && entry.path().is_dir() {
                 for child in fs::read_dir(entry.path())? {
                     let child = child?;
+                    if !child.file_type()?.is_dir() && !child.file_type()?.is_symlink() {
+                        continue;
+                    }
                     names.push(format!("{name}/{}", child.file_name().to_string_lossy()));
                 }
             } else {
@@ -163,14 +188,37 @@ fn scan_using(root: &Path, cached: Option<&BTreeMap<String, Value>>) -> Result<L
                 let location = lockfile::child(&parent, &name);
                 let path = root.join(&location);
                 let symlink = fs::symlink_metadata(&path)?.file_type().is_symlink();
-                let data = if let Some(data) = cached.and_then(|c| c.get(&location)) {
+                let mut data = if let Some(data) = cached.and_then(|c| c.get(&location)) {
                     data.clone()
                 } else {
                     manifest::read(&path)?.unwrap_or_else(Value::object)
                 };
+                let workspace = if symlink {
+                    ctx.workspaces
+                        .borrow()
+                        .iter()
+                        .find(|w| {
+                            w.name == name
+                                && fs::canonicalize(&path).ok()
+                                    == fs::canonicalize(ctx.source_root.borrow().join(&w.relative))
+                                        .ok()
+                        })
+                        .cloned()
+                } else {
+                    None
+                };
+                if let Some(workspace) = &workspace {
+                    data.set("link", Value::Bool(true));
+                    data.set("tnpmWorkspace", Value::from(workspace.relative.as_str()));
+                }
                 lock.packages.insert(location.clone(), data);
-                if !symlink && location.matches("node_modules/").count() < 128 {
+                if (!symlink || workspace.is_some())
+                    && location.matches("node_modules/").count() < 128
+                {
                     queue.push_back(location);
+                }
+                if lock.packages.len() > 50_000 {
+                    bail!("installed graph exceeds 50,000 packages");
                 }
             }
         }
@@ -178,7 +226,12 @@ fn scan_using(root: &Path, cached: Option<&BTreeMap<String, Value>>) -> Result<L
     Ok(lock)
 }
 
-fn link_bins(root: &Path, paths: &BTreeSet<String>) -> Result<()> {
+fn link_bins(
+    ctx: &Context<'_>,
+    root: &Path,
+    paths: &BTreeSet<String>,
+    lock: &Lockfile,
+) -> Result<()> {
     let mut bin_dirs = BTreeSet::from([root.join("node_modules/.bin")]);
     for path in paths {
         let package = root.join(path);
@@ -188,10 +241,13 @@ fn link_bins(root: &Path, paths: &BTreeSet<String>) -> Result<()> {
             package.parent().unwrap()
         };
         bin_dirs.insert(modules.join(".bin"));
+        if lock.packages.get(path).is_some_and(|e| flag(e, "link")) {
+            bin_dirs.insert(package.join("node_modules/.bin"));
+        }
     }
     for dir in &bin_dirs {
         if let Ok(relative) = dir.strip_prefix(root) {
-            ensure_safe_parents(root, &relative.to_string_lossy())?;
+            ensure_install_path(ctx, root, &relative.to_string_lossy(), lock)?;
         }
         // .bin is generated exclusively by package installation.
         remove_path(dir)?;
@@ -265,42 +321,73 @@ pub(super) async fn materialize(
     ensure_safe_parents(root, "node_modules")?;
     // Validate all paths before mutating the tree.
     for path in lock.packages.keys().filter(|p| !p.is_empty()) {
-        ensure_safe_parents(root, path)?;
+        ensure_install_path(ctx, root, path, lock)?;
+        if flag(&lock.packages[path], "link") {
+            super::sources::workspace_target(ctx, &lock.packages[path])?;
+        }
+    }
+    super::platform::engines(ctx, manifest, "root")?;
+    if !super::platform::compatible(manifest) {
+        bail!("EBADPLATFORM: unsupported OS/CPU/libc for root");
     }
     let scripts_enabled = !ctx.options.ignore_scripts && !ctx.config.enabled("ignore-scripts");
-    if clean {
-        ctx.progress
-            .event("place", "removing existing node_modules for clean install");
-        remove_path(&root.join("node_modules"))?;
-    }
-    if scripts_enabled {
-        ctx.lifecycle(root, manifest, "preinstall")?;
-    }
-    fs::create_dir_all(root.join("node_modules"))?;
     let mut selected = BTreeSet::new();
     for (path, entry) in &lock.packages {
         if path.is_empty() || ctx.omit(entry) {
             continue;
         }
-        if !platform(entry) {
+        if !super::platform::compatible(entry) {
             if flag(entry, "optional") {
                 continue;
             }
-            bail!("EBADPLATFORM: unsupported OS/CPU for {path}");
+            bail!("EBADPLATFORM: unsupported OS/CPU/libc for {path}");
+        }
+        if let Err(error) = super::platform::engines(ctx, entry, path) {
+            if flag(entry, "optional") {
+                continue;
+            }
+            return Err(error);
         }
         selected.insert(path.clone());
     }
     retain_reachable(lock, manifest, &mut selected)?;
+    if clean {
+        let mut workspace_modules = BTreeSet::new();
+        for path in &selected {
+            let entry = &lock.packages[path];
+            if flag(entry, "link") {
+                let target = super::sources::workspace_target(ctx, entry)?;
+                ensure_safe_parents(&target, "node_modules")?;
+                workspace_modules.insert(target.join("node_modules"));
+            }
+        }
+        ctx.progress
+            .event("place", "removing existing node_modules for clean install");
+        remove_path(&root.join("node_modules"))?;
+        for modules in workspace_modules {
+            remove_path(&modules)?;
+        }
+    }
+    if scripts_enabled {
+        ctx.lifecycle(root, manifest, "preinstall")?;
+    }
+    fs::create_dir_all(root.join("node_modules"))?;
     ctx.progress.event(
         "prepare",
         &format!("scanning {}", root.join("node_modules").display()),
     );
-    let installed = scan(root)?;
+    let installed = scan(ctx, root)?;
     let mut changed = BTreeSet::new();
     let mut jobs: BTreeSet<_> = selected
         .iter()
         .filter(|path| {
             let entry = &lock.packages[*path];
+            if entry
+                .str("resolved")
+                .is_some_and(|s| s.starts_with("file:"))
+            {
+                return true;
+            }
             !installed.packages.get(*path).is_some_and(|data| {
                 data.str("version") == entry.str("version")
                     && root.join(path).join("package.json").is_file()
@@ -340,6 +427,12 @@ pub(super) async fn materialize(
             async move {
                 let entry = &lock.packages[path];
                 let result = async {
+                    if super::bundles::prepare(ctx, entry, &destination).await?
+                        || super::sources::prepare(ctx, entry, &destination).await?
+                    {
+                        super::bundles::strip_modules(entry, &destination)?;
+                        return Ok::<_, anyhow::Error>(());
+                    }
                     let package_cache = package_cache_path(ctx, entry, path);
                     if let Some(cached) = package_cache
                         .as_deref()
@@ -351,13 +444,14 @@ pub(super) async fn materialize(
                         let cache_hit =
                             tokio::task::spawn_blocking(move || clone_tree(&cached, &dest)).await?;
                         if cache_hit.is_ok() {
+                            super::bundles::strip_modules(entry, &destination)?;
                             return Ok::<_, anyhow::Error>(());
                         }
                         // A stale/partially damaged extracted cache is only an
                         // optimization failure; fall back to the verified tarball.
                         remove_path(&destination)?;
                     }
-                    let bytes = tarball(ctx, entry).await?;
+                    let bytes = tarball(ctx, entry, lockfile::name_at(path)).await?;
                     ctx.progress.event("prepare", &format!("extract {path}"));
                     let dest = destination.clone();
                     let cache = package_cache.clone();
@@ -377,6 +471,7 @@ pub(super) async fn materialize(
                     })
                     .await
                     .context("package extraction task failed")??;
+                    super::bundles::strip_modules(entry, &destination)?;
                     Ok::<_, anyhow::Error>(())
                 }
                 .await
@@ -424,7 +519,7 @@ pub(super) async fn materialize(
         // BTree order guarantees parent locations precede their nested packages.
         for (path, source) in prepared {
             let destination = root.join(&path);
-            ensure_safe_parents(root, &path)?;
+            ensure_install_path(ctx, root, &path, lock)?;
             remove_path(&destination)?;
             fs::create_dir_all(destination.parent().unwrap())?;
             fs::rename(source, destination)?;
@@ -441,7 +536,7 @@ pub(super) async fn materialize(
         for path in installed.packages.keys().rev() {
             if !selected.contains(path) {
                 ctx.progress.start("remove", path);
-                ensure_safe_parents(root, path)?;
+                ensure_install_path(ctx, root, path, lock)?;
                 remove_path(&root.join(path))?;
                 ctx.progress.finish("remove", path, "removed");
             }
@@ -456,7 +551,7 @@ pub(super) async fn materialize(
         });
         if !tree_unchanged || !bins_exist {
             ctx.progress.event("place", "linking package binaries");
-            link_bins(root, &selected)?;
+            link_bins(ctx, root, &selected, lock)?;
         }
         if scripts_enabled {
             // Nested dependencies first; all binaries already exist before any lifecycle hook.
@@ -468,7 +563,10 @@ pub(super) async fn materialize(
                 }
                 let directory = root.join(path);
                 if let Some(data) = manifest::read(&directory)? {
-                    for event in ["preinstall", "install", "postinstall"] {
+                    for event in ["preinstall", "install", "postinstall", "prepare"] {
+                        if event == "prepare" && lock.packages[path].str("tnpmSpec").is_none() {
+                            continue;
+                        }
                         if let Err(error) = ctx.lifecycle(&directory, &data, event) {
                             if !flag(&lock.packages[path], "optional") {
                                 return Err(error);
@@ -483,7 +581,7 @@ pub(super) async fn materialize(
                             for removed in previous.difference(&selected) {
                                 remove_path(&root.join(removed))?;
                             }
-                            link_bins(root, &selected)?;
+                            link_bins(ctx, root, &selected, lock)?;
                             break;
                         }
                     }
@@ -532,7 +630,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
         let count = if fs::symlink_metadata(&modules)
             .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         {
-            scan(root)?.packages.len()
+            scan(ctx, root)?.packages.len()
         } else {
             0
         };
@@ -541,8 +639,9 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
         return Ok(());
     }
     let manifest = manifest::read(root)?.context("package.json not found")?;
+    let (manifest, _) = super::sources::effective(root, &manifest)?;
     let old = Lockfile::read(root)?;
-    let mut installed = scan(root)?;
+    let mut installed = scan(ctx, root)?;
     let used = installed.reachable_with(&manifest, false, ctx.peer_policy())?;
     installed.classify_with(&manifest, ctx.peer_policy());
     let mut retained = BTreeSet::new();
@@ -555,7 +654,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
                 .iter()
                 .any(|n| n == lockfile::name_at(path));
         if (!used.contains(path) || ctx.omit(entry)) && !filtered {
-            ensure_safe_parents(root, path)?;
+            ensure_install_path(ctx, root, path, &installed)?;
             remove_path(&root.join(path))?;
             removed += 1;
         } else {
@@ -565,7 +664,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
     // Parent removal may also remove previously retained nested extras.
     retained.retain(|path| root.join(path).join("package.json").is_file());
     if !ctx.options.lock_only {
-        link_bins(root, &retained)?;
+        link_bins(ctx, root, &retained, &installed)?;
     }
     if let Some(mut lock) = old {
         let used = lock.reachable_with(&manifest, false, ctx.peer_policy())?;

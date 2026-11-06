@@ -191,6 +191,48 @@ pub fn satisfies(version: &str, range: &str) -> Option<bool> {
     Some(result)
 }
 
+/// Ranges are unions of comparator intervals. An inhabited intersection has a
+/// witness at a lower endpoint or its immediate stable/prerelease successor.
+pub fn intersects(left: &str, right: &str) -> Option<bool> {
+    satisfies("0.0.0", left)?;
+    satisfies("0.0.0", right)?;
+    let mut candidates = vec![Version::parse("0.0.0")?];
+    for range in [left, right] {
+        for text in range.split_whitespace().filter(|s| *s != "||" && *s != "-") {
+            let text = text.trim_start_matches(['>', '<', '=', '^', '~']);
+            if text.is_empty() {
+                continue;
+            }
+            let Some((base, count)) = partial(text) else {
+                continue;
+            };
+            candidates.push(base.clone());
+            if !base.pre.is_empty() {
+                let mut next = base.clone();
+                next.pre.push("0".into());
+                candidates.push(next);
+                let mut stable = base.clone();
+                stable.pre.clear();
+                candidates.push(stable);
+            }
+            if count < 3 {
+                if let Some(next) = upper(base.clone(), count) {
+                    candidates.push(next);
+                }
+            } else if let Some(patch) = base.patch.checked_add(1) {
+                let mut next = base;
+                next.patch = patch;
+                next.pre.clear();
+                candidates.push(next);
+            }
+        }
+    }
+    Some(candidates.iter().any(|candidate| {
+        let value = candidate.to_string();
+        satisfies(&value, left) == Some(true) && satisfies(&value, right) == Some(true)
+    }))
+}
+
 fn partial(value: &str) -> Option<(Version, usize)> {
     if let Some(version) = Version::parse(value) {
         return Some((version, 3));
@@ -347,6 +389,23 @@ fn satisfies_group(version: &Version, group: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn range_intersections_include_partial_strict_or_and_prerelease_bounds() {
+        for (a, b, expected) in [
+            ("^1", "1", true),
+            ("^1", "^2", false),
+            (">1", ">=2 <3", true),
+            (">1.0.0 <1.0.1", "*", false),
+            (">1.0.0-alpha <1.0.0-beta", "1.0.0-alpha.0", true),
+            ("1 || 3", "^2", false),
+            ("1 || 3", ">=2", true),
+            ("1.0 - 1.2", ">=1.2.9", true),
+        ] {
+            assert_eq!(intersects(a, b), Some(expected), "{a} / {b}");
+            assert_eq!(intersects(b, a), Some(expected), "{b} / {a}");
+        }
+        assert_eq!(intersects("latest", "*"), None);
+    }
     #[test]
     fn semver_validation_and_ordering() {
         for invalid in ["1", "01.2.3", "1.2.3-01", "1.2.3-", "1.2.3+a+b"] {

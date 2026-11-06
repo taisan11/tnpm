@@ -81,15 +81,17 @@ stderr をファイルやパイプにリダイレクトした場合、または 
 
 ```text
 tnpm: [0/1] resolve: checking app@^1
-tnpm: [0/1] resolve: HTTP GET metadata https://registry.example/app
+tnpm: [0/1] resolve: HTTP GET metadata app
 tnpm: [1/1] resolve: resolved app@^1
 tnpm: [1/2] resolve: checking child@1
-tnpm: [0/2] prepare: HTTP GET tarball https://registry.example/app.tgz
+tnpm: [0/2] prepare: HTTP GET tarball app
 tnpm: [1/2] prepare: prepared node_modules/app
 tnpm: [1/2] place: installed 1.1.0 at node_modules/app
 ```
 
 処理済み件数／確認済み件数は段階別です。
+
+通信やメタデータキャッシュの進捗には URL ではなくパッケージ名を表示します。
 
 - `resolve`: 一意なパッケージ名＋要求範囲のメタデータ解決。推移的依存や peer 条件の発見で分母が途中で増えます。同一要求の再利用は重複加算しません。
 - `prepare`: 配置が必要な物理パスの準備。通信・展開済みパッケージの clone・展開を区別します。optional のスキップや失敗も処理済みとして記録します。

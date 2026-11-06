@@ -20,6 +20,8 @@ pub const ROOT_FIELDS: &[&str] = &[
     "peerDependencies",
     "peerDependenciesMeta",
     "engines",
+    "workspaces",
+    "overrides",
 ];
 pub const DEP_FIELDS: &[&str] = &[
     "dependencies",
@@ -40,7 +42,7 @@ pub struct Dependency {
 pub fn dependencies(manifest: &Value, root: bool) -> Vec<Dependency> {
     let mut deps = BTreeMap::new();
     for field in ["dependencies", "devDependencies", "optionalDependencies"] {
-        if field == "devDependencies" && !root {
+        if field == "devDependencies" && !root && manifest.get("tnpmWorkspace").is_none() {
             continue;
         }
         for (name, value) in manifest.get(field).map(Value::members).unwrap_or_default() {
@@ -272,8 +274,12 @@ impl Lockfile {
             if (!path.is_empty() && !valid_location(&path)) || !matches!(entry, Value::Object(_)) {
                 bail!("invalid lockfile package location: {path}");
             }
-            if entry.get("link") == Some(&Value::Bool(true)) {
-                bail!("link/workspace dependencies are not yet supported: {path}");
+            if entry.get("link") == Some(&Value::Bool(true))
+                && !entry
+                    .str("tnpmWorkspace")
+                    .is_some_and(spec::safe_workspace_path)
+            {
+                bail!("invalid workspace link: {path}");
             }
             if packages.insert(path.clone(), entry).is_some() {
                 bail!("duplicate lockfile package location: {path}");
@@ -407,6 +413,11 @@ impl Lockfile {
                     .collect()
             };
             if map(locked) != map(manifest) {
+                bail!("package.json and lockfile disagree on {field}; run install first");
+            }
+        }
+        for field in ["overrides", "workspaces"] {
+            if locked.get(field) != manifest.get(field) {
                 bail!("package.json and lockfile disagree on {field}; run install first");
             }
         }

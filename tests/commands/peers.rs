@@ -9,13 +9,44 @@ fn peer_fixture() -> Fixture {
 }
 
 #[test]
-fn peer_resolution_is_opt_in_and_cli_options_override_config() {
+fn default_install_fetches_required_peers_and_accepts_conflicts() {
+    let f = Fixture::new();
+    f.single("plugin", r#", "peerDependencies":{"host":"^1"}"#);
+    f.releases("host", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(f.root.join("node_modules/host/package.json").is_file());
+    f.file(
+        "package.json",
+        r#"{"dependencies":{"plugin":"1","host":"2"}}"#,
+    );
+    let out = f.invoke(&["install", "--ignore-scripts"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("overriding peer"));
+}
+
+#[test]
+fn peer_resolution_is_enabled_by_default_and_cli_options_override_config() {
     let f = Fixture::new();
     f.single("plugin", r#", "peerDependencies":{"host":"1"}"#);
     f.file("package.json", r#"{"dependencies":{"plugin":"1"}}"#);
-    f.ok(&["update", "--latest", "--ignore-scripts"]);
+    assert!(
+        !f.invoke(&["update", "--latest", "--ignore-scripts"])
+            .status
+            .success()
+    );
+    f.ok(&[
+        "update",
+        "--latest",
+        "--legacy-peer-deps",
+        "--ignore-scripts",
+    ]);
     assert!(!f.root.join("node_modules/host").exists());
-    f.ok(&["ci", "--ignore-scripts"]);
+    f.ok(&["ci", "--legacy-peer-deps", "--ignore-scripts"]);
     assert!(
         !f.invoke(&["update", "--no-legacy-peer-deps", "--ignore-scripts"])
             .status

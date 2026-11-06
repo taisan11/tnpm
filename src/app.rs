@@ -3,9 +3,12 @@ use crate::{cli, commands, config, install};
 use anyhow::{Context, Result};
 
 pub fn run() -> Result<()> {
-    let Some(options) = cli::parse(std::env::args().skip(1))? else {
+    let Some(mut options) = cli::parse(std::env::args().skip(1))? else {
         return Ok(());
     };
+    if options.global {
+        return crate::global::run(&options);
+    }
     // Cache maintenance is global and must work without a project or a valid npmrc.
     if options.command == "cache" {
         return commands::cache::run(&options);
@@ -27,16 +30,55 @@ pub fn run() -> Result<()> {
         None
     };
     let start = target.as_deref().unwrap_or(start);
-    let root = if options.prefix.is_some() || matches!(options.command.as_str(), "init" | "create")
-    {
-        if start.is_absolute() {
-            start.to_owned()
+    let mut root =
+        if options.prefix.is_some() || matches!(options.command.as_str(), "init" | "create") {
+            if start.is_absolute() {
+                start.to_owned()
+            } else {
+                cwd.join(start)
+            }
         } else {
-            cwd.join(start)
+            config::project_root(start)
+        };
+    if !matches!(options.command.as_str(), "init" | "create" | "exec") {
+        if let Some(workspace_root) = crate::workspaces::root(&root)? {
+            if (options.command == "run"
+                || options.command == "uninstall"
+                || (options.command == "install" && !options.arguments.is_empty())
+                || (options.command == "update" && options.latest))
+                && options.workspace.is_empty()
+                && !options.workspaces
+            {
+                options.workspace.push(
+                    root.strip_prefix(&workspace_root)?
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+            root = workspace_root;
         }
-    } else {
-        config::project_root(start)
-    };
+        if options.workspaces || !options.workspace.is_empty() {
+            let data = crate::manifest::read(&root)?.context("workspaces require package.json")?;
+            let workspaces = crate::workspaces::discover(&root, &data)?;
+            let selected = crate::workspaces::selected(&workspaces, &options.workspace)?;
+            anyhow::ensure!(!selected.is_empty(), "no workspaces found");
+            if options.command == "run" {
+                let config = config::Config::load(&root, &options)?;
+                for workspace in selected {
+                    commands::run::run(&root.join(&workspace.relative), &options, &config)?;
+                }
+                return Ok(());
+            }
+            // Install is a single shared graph. Manifest mutation is scoped separately.
+            anyhow::ensure!(
+                matches!(
+                    options.command.as_str(),
+                    "install" | "ci" | "update" | "uninstall"
+                ),
+                "workspace selection supports run, install, ci, update and uninstall"
+            );
+        }
+    }
     let config = config::Config::load(&root, &options)?;
     match options.command.as_str() {
         "ls" => commands::packages::list(&root, &options),

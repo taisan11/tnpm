@@ -14,6 +14,7 @@
 - `node_modules/.tnpm-lock.json` を生成し、記載ディレクトリの存在・余剰ディレクトリ・更新日時を確認してから manifest 読み込みの代わりに使用します。手動でファイルの内容だけを変更した場合は npm と同様に hidden lockfile を削除してください。
 - バージョンが変わらないパッケージは再展開せず、ツリーと bin が変わらなければリンクの再生成も省略します。必須 tarball の取得・検証・展開を staging で完了してから置き換えます（`ci` の先行削除・スクリプト失敗を含め完全なトランザクションではありません）。
 - SHA-512 / SHA-256 / SHA-1 を検証し、不正な lockfile パス、tar 内のパス遡上・リンク・デバイス、symlink 経由のインストール先を拒否します。integrity がない外部 lockfile は検証なしで取得します。
+- 宣言された workspace だけは検証済みソースへの symlink を許可し、競合する子依存をその workspace の node_modules に配置します。`file:` のコピー、Git のコミットと integrity、bundled package の archive 内パスも独自 lockfile に保持します。[依存ソースの仕様](dependency-sources.md)。
 - 依存の `preinstall` / `install` / `postinstall`、ルートの install / prepare 系フックを実行します。信頼しないパッケージには `--ignore-scripts` を指定してください。
 
 調査時だけ `TNPM_PROFILE=1` と `TNPM_PROFILE_TRANSPORT=baseline|gzip|http2|both|default` を組み合わせると、圧縮・HTTP バージョンの条件を切り替えられます。通常実行は常にデフォルト機能と全圧縮形式を利用します。以前の調査用 Cargo feature `profile-gzip` / `profile-http2` は不要になりました。

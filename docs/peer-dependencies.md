@@ -1,6 +1,6 @@
 # peerDependencies
 
-既定では `--legacy-peer-deps` と同じく peer の自動取得・検証を行いません。必要な peer は通常の依存として明示してください。これは Bun との完全な互換性を保証するものではありません。`--no-legacy-peer-deps` または `legacy-peer-deps=false` で peer 解決を有効にできます。外部の npm / Arborist への委譲や追加依存はありません。
+既定で必須 peer の自動取得と検証を行い、バージョン不一致は警告して続行します。`--legacy-peer-deps` または `legacy-peer-deps=true` で peer 解決を無効にできます。これは Bun との完全な互換性を保証するものではありません。外部の npm / Arborist への委譲や追加依存はありません。
 
 ## 解決規則
 
@@ -20,19 +20,19 @@
 
 | 設定 | 動作 |
 | --- | --- |
-| 既定 / `--legacy-peer-deps` | peer の自動取得・範囲検証を無効にします。 |
-| `--no-legacy-peer-deps` | peer を解決し、不一致を警告します。必須 peer の欠落や不正な配置はエラーです。 |
+| `--legacy-peer-deps` | peer の自動取得・範囲検証を無効にします。 |
+| 既定 / `--no-legacy-peer-deps` | peer を解決し、不一致を警告します。必須 peer の欠落や不正な配置はエラーです。 |
 | `--strict-peer-deps` | peer 解決を有効にし、バージョン不一致も `ERESOLVE` にします。 |
 | `--force` / `-f` | strict モードでも peer のバージョン不一致を警告だけにします。存在しない必須パッケージを成功扱いにはしません。 |
 | `--omit=peer` | peer 解決が有効な場合、解決と lockfile への記録は実施し、peer 専用のパッケージだけディスクへの配置から除外します。 |
 
 `strict-peer-deps`、`legacy-peer-deps`、`force` は `.npmrc` / `npm_config_*` でも設定できます。明示的な CLI の legacy 指定は設定に優先します。`--strict-peer-deps` も明示的な legacy 指定がない限り peer 解決を有効にします。lockfile を作ったときと `ci` で、解決に関わる設定を揃えてください。
 
-たとえば consumer の peer 条件が `astro@^4.0.0` でも、プロジェクトが Astro 7 を使用していれば既定では検証せず続行します。通常の dependencies の `^4.0.0` が 7 を含むようになるわけではありません。通常依存を宣言範囲を越えて更新する場合は `update --latest` を使います。
+たとえば consumer の peer 条件が `astro@^4.0.0` でも、プロジェクトが Astro 7 を使用していれば既定では警告して続行します。通常の dependencies の `^4.0.0` が 7 を含むようになるわけではありません。通常依存を宣言範囲を越えて更新する場合は `update --latest` を使います。
 
-`update --latest` でも peer は既定で検証せず、`--strict-peer-deps` では不一致をエラーにします。成功しても実行時の API 互換性は保証しません。解決失敗時は `--latest` で準備した宣言も含め、プロジェクトの manifest / lockfile / node_modules を変更しません。
+`update --latest` でも peer の不一致は既定で警告し、`--strict-peer-deps` ではエラーにします。成功しても実行時の API 互換性は保証しません。解決失敗時は `--latest` で準備した宣言も含め、プロジェクトの manifest / lockfile / node_modules を変更しません。
 
-この既定ポリシーは tnpm の意図的な選択です。npm などとは異なります。`ls --all` は診断用コマンドなので、不一致を引き続き `invalid` として報告します。
+この既定ポリシーは tnpm の意図的な選択です。npm などと完全に同じではありません。`ls --all` は診断用コマンドなので、不一致を引き続き `invalid` として報告します。
 
 ## lockfile と実装
 
@@ -50,4 +50,4 @@
 cargo test
 ```
 
-これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspaces / file / Git / URL など、パッケージマネージャー全体で未対応の依存形式は peer に指定しても未対応です。
+これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspace / file / Git ソースも共通の peer 解決を使用しますが、HTTP tarball URL の直接指定など、パッケージマネージャー全体で未対応の依存形式は peer に指定しても未対応です。[依存ソースの仕様と制限](dependency-sources.md)。

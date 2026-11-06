@@ -137,14 +137,18 @@ fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
     assert!(!error.contains('\r'));
     assert!(!error.contains('\x1b'));
     for expected in [
-        "HTTP GET metadata",
-        "HTTP GET tarball",
+        "HTTP GET metadata app",
+        "HTTP GET metadata child",
+        "HTTP GET tarball app",
+        "HTTP GET tarball child",
         "extract node_modules/app",
         "place:",
         "node_modules/child",
     ] {
         assert!(error.contains(expected), "{error}");
     }
+    assert!(!error.contains("http://"), "{error}");
+    assert!(!error.contains("https://"), "{error}");
     let mut phases = BTreeMap::new();
     for line in error.lines() {
         let Some(rest) = line.strip_prefix("tnpm: [") else {

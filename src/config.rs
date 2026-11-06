@@ -46,10 +46,13 @@ impl Config {
                     .map(|_| (env_key(&key[11..]), value))
             })
             .collect();
-        let mut prefix = env_values
-            .get("prefix")
-            .cloned()
-            .unwrap_or_else(|| "/usr/local".into());
+        let mut prefix = env_values.get("prefix").cloned().unwrap_or_else(|| {
+            if options.global {
+                format!("{home}/.tnpm/global")
+            } else {
+                "/usr/local".into()
+            }
+        });
         let userconfig = expand_path(
             &options
                 .userconfig

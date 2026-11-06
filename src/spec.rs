@@ -2,6 +2,14 @@
 use crate::{json::Value, semver};
 use anyhow::{Result, bail};
 
+pub fn safe_workspace_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(['\\', ':', '\0'])
+        && path
+            .split('/')
+            .all(|p| !p.is_empty() && p != "node_modules" && !p.starts_with('.'))
+}
+
 pub fn package_spec(spec: &str) -> Result<(&str, Option<&str>)> {
     let at = if let Some(unscoped) = spec.strip_prefix('@') {
         unscoped.find('@').map(|i| i + 1)
@@ -55,6 +63,29 @@ pub fn registry_dependency<'a>(name: &'a str, selector: &'a str) -> Result<(&'a 
 
 /// None denotes a tag/unsupported range; a different alias target never matches.
 pub fn satisfies(name: &str, selector: &str, entry: &Value) -> Option<bool> {
+    if let Some(range) = selector.strip_prefix("workspace:") {
+        if entry.str("name") != Some(name) {
+            return Some(false);
+        }
+        if matches!(range, "*" | "^" | "~") {
+            return Some(true);
+        }
+        return semver::satisfies(entry.str("version").unwrap_or(""), range);
+    }
+    if let Some(source) = entry.str("tnpmSpec") {
+        if selector == source {
+            return Some(true);
+        }
+        if selector.starts_with("file:")
+            || selector.starts_with("workspace:")
+            || selector.starts_with("git")
+            || selector.starts_with("github:")
+            || selector.starts_with("https:")
+            || selector.starts_with("ssh:")
+        {
+            return Some(false);
+        }
+    }
     let Ok((target, range)) = dependency_target(name, selector) else {
         return Some(false);
     };
