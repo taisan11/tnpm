@@ -16,6 +16,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Check
