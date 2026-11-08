@@ -3,13 +3,7 @@
 
 use crate::{config::Config, json::Value, scripts};
 use anyhow::{Context, Result};
-use std::{
-    env,
-    ffi::OsString,
-    fs,
-    path::Path,
-    process::Command,
-};
+use std::{env, ffi::OsString, fs, path::Path, process::Command};
 
 #[cfg(tnpm_bundled_tsrs)]
 const TSRS_VERSION: &str = "0.23.0-ts7.1.0-beta";
@@ -28,9 +22,7 @@ pub fn shim(root: &Path, config: &Config) -> Result<Option<tempfile::TempDir>> {
         return Ok(None);
     }
 
-    let dir = tempfile::Builder::new()
-        .prefix("tnpm-tsrs-")
-        .tempdir()?;
+    let dir = tempfile::Builder::new().prefix("tnpm-tsrs-").tempdir()?;
     let binary = env::current_exe().context("could not locate tnpm executable")?;
     #[cfg(windows)]
     {
@@ -92,8 +84,7 @@ fn available(root: &Path) -> bool {
         .map(|ancestor| ancestor.join("node_modules/.bin").join(filename))
         .any(|path| path.is_file())
         || env::split_paths(&env::var_os("PATH").unwrap_or_default()).any(|dir| {
-            dir.join(filename).is_file()
-                || (cfg!(windows) && dir.join("tsrs.exe").is_file())
+            dir.join(filename).is_file() || (cfg!(windows) && dir.join("tsrs.exe").is_file())
         })
 }
 
