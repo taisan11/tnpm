@@ -25,3 +25,12 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked --all-targets
+
+  windows-isolated:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify Windows junction and hardlink implementation
+        run: cargo test --locked --test commands windows_uses_directory_junctions_and_hardlinked_payloads -- --nocapture
