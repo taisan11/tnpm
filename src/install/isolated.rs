@@ -4,7 +4,9 @@ use super::{context::Context, flag, store};
 use crate::{json::Value, lockfile::{self, Lockfile}, manifest, scripts};
 use anyhow::{Context as _, Result, bail};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::{Component, Path, PathBuf}};
+use std::{collections::BTreeSet, fs, path::{Path, PathBuf}};
+#[cfg(unix)]
+use std::path::Component;
 
 const MARKER: &str = "node_modules/.tnpm-layout";
 
@@ -28,6 +30,7 @@ pub(super) fn package_path(root: &Path, path: &str) -> PathBuf {
         .join(lockfile::name_at(path))
 }
 
+#[cfg(unix)]
 fn relative(from: &Path, target: &Path) -> PathBuf {
     let from: Vec<Component<'_>> = from.components().collect();
     let target: Vec<Component<'_>> = target.components().collect();
