@@ -7,6 +7,7 @@ mod config;
 mod explain;
 mod extended_install;
 mod install;
+mod isolated;
 mod jsr;
 mod outdated;
 mod output;
