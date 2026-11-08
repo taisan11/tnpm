@@ -48,7 +48,8 @@ fn relative(from: &Path, target: &Path) -> PathBuf {
 fn directory_link(target: &Path, destination: &Path) -> Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(destination) {
         if metadata.file_type().is_symlink()
-            && fs::canonicalize(destination).ok() == fs::canonicalize(target).ok()
+            && let (Ok(actual), Ok(expected)) = (fs::canonicalize(destination), fs::canonicalize(target))
+            && actual == expected
         {
             return Ok(());
         }
@@ -144,6 +145,9 @@ pub(super) fn convert(
     lock: &Lockfile,
     selected: &BTreeSet<String>,
 ) -> Result<()> {
+    // Mark before relocating anything: a failed conversion is discarded on the
+    // next install rather than treating half-moved packages as hoisted.
+    fs::write(root.join(MARKER), "isolated\n")?;
     let mut order: Vec<_> = selected.iter().filter(|path| !flag(&lock.packages[*path], "link")).collect();
     // Move descendants before parents, avoiding relocation of nested node_modules.
     order.sort_by_key(|path| std::cmp::Reverse((path.matches("/node_modules/").count(), path.len())));
@@ -173,6 +177,5 @@ pub(super) fn convert(
     }
     // Only direct project dependencies are visible from the project root.
     link_dependencies(ctx, root, "", manifest, lock, selected, &root.join("node_modules"))?;
-    fs::write(root.join(MARKER), "isolated\n")?;
     Ok(())
 }
