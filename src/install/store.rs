@@ -65,8 +65,8 @@ pub(super) fn package_cache_path(ctx: &Context<'_>, entry: &Value, path: &str) -
         return None;
     }
     Some(
-        dirs::home_dir()?
-            .join(".tnpm/cache/packages-v2")
+        PathBuf::from(ctx.config.get("store-dir")?)
+            .join("packages-v2")
             .join(format!("{name}@{version}")),
     )
 }
