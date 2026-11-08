@@ -107,6 +107,34 @@ fn pack_honors_allowlist_mandatory_files_nested_ignores_and_secret_exclusions() 
 }
 
 #[test]
+fn pack_files_patterns_support_character_classes_recursive_globs_and_exclusion() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"name":"glob-pack","version":"1.0.0","files":["src/[ab]?.js","lib/**/*.ts","!src/b1.js"]}"#,
+    );
+    for path in [
+        "src/a1.js",
+        "src/b1.js",
+        "src/c1.js",
+        "lib/deep/module.ts",
+        "lib/deep/module.js",
+    ] {
+        f.file(path, path);
+    }
+    f.ok(&["pack", "--json"]);
+    let files = archive(&fs::read(f.root.join("glob-pack-1.0.0.tgz")).unwrap());
+    assert_eq!(
+        files.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "package/lib/deep/module.ts",
+            "package/package.json",
+            "package/src/a1.js",
+        ]
+    );
+}
+
+#[test]
 fn pack_uses_npmignore_instead_of_gitignore_and_supports_negation() {
     let f = Fixture::new();
     f.file("package.json", r#"{"name":"demo","version":"1.0.0"}"#);
