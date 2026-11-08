@@ -1,5 +1,6 @@
 mod commonjs;
 mod oxc;
+mod remote;
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -39,17 +40,70 @@ pub fn internal() -> Option<Result<()>> {
             Ok(())
         })());
     }
+    if command == "--tnpm-runner-fetch" {
+        return Some((|| {
+            let url = args
+                .next()
+                .context("missing remote URL")?
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("invalid remote URL"))?;
+            let config = remote::Settings::load()?;
+            let value = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(remote::fetch(&config, &url))?;
+            io::stdout().write_all(value.pretty().as_bytes())?;
+            Ok(())
+        })());
+    }
+    if command == "--tnpm-runner-package" {
+        return Some((|| {
+            let specifier = args
+                .next()
+                .context("missing package specifier")?
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("invalid package specifier"))?;
+            let parent = args.next().context("missing package importer")?;
+            let conditions = args
+                .map(|v| v.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let settings = remote::Settings::load()?;
+            let path = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(remote::package(
+                    &settings,
+                    &specifier,
+                    Path::new(&parent),
+                    &conditions,
+                ))?;
+            io::stdout().write_all(
+                path.to_str()
+                    .context("resolved path is not UTF-8")?
+                    .as_bytes(),
+            )?;
+            Ok(())
+        })());
+    }
     None
 }
 
-pub fn run(cwd: &Path, entry: &Path, args: &[String]) -> Result<()> {
+pub fn run(
+    cwd: &Path,
+    entry: &Path,
+    args: &[String],
+    options: &crate::cli::Options,
+    config: &crate::config::Config,
+) -> Result<()> {
     if !entry.is_file() {
         bail!("runner entry not found: {}", entry.display());
     }
     let source = STANDARD.encode(include_bytes!("loader.mjs"));
+    let settings = remote::settings(cwd, options, config)?;
     let status = Command::new("node")
         .current_dir(cwd)
         .env("TNPM_RUNNER_EXECUTABLE", env::current_exe()?)
+        .env("TNPM_RUNNER_CONFIG", settings.pretty())
         .arg("--enable-source-maps")
         .arg("--import")
         .arg(format!("data:text/javascript;base64,{source}"))

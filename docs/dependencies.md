@@ -11,10 +11,12 @@
 - `simdutf8`（標準 feature）: レジストリ応答の UTF-8 を `compat` API で検証し、本文全体を String へコピーせず `nojson` に渡します。バイナリキャッシュの共有文字列プールは `basic` API で一度だけ検証します。対応 CPU の SIMD をライブラリ側で選択し、CPU 固有のビルドフラグは強制しません。
 - `xxhash-rust`（`xxh3` のみ）: レジストリキャッシュの偶発的な破損を XXH3-128 で検出します。認証用途ではなく、tarball の暗号学的な SRI 検証は変更しません。追加の CPU 固有ビルドフラグは強制しません。
 - `reqwest`: デフォルト feature（HTTPS/rustls、HTTP/2、charset、system-proxy）に加え、`gzip`・`brotli`・`deflate`・`zstd` を有効化。対応形式を `Accept-Encoding` で送信し、レスポンスを自動展開します。`json` / `blocking` は有効にせず、JSON は引き続き `nojson` で処理します。
-- `tokio`: `default-features = false`、直接指定は `rt`。通信に必要なネットワーク・タイマー feature は reqwest 経由で有効になります。シングルスレッド async runtime と展開用の blocking pool を使用します。
+- `tokio`: `default-features = false`、直接指定は `rt` / `time`。Web ログインの完了待ちにタイマーを使用します。通信に必要なネットワーク feature は reqwest 経由で有効になります。シングルスレッド async runtime と展開用の blocking pool を使用します。
 - `dirs`: `home_dir()` で `~/.tnpm/cache` の基準となるホームディレクトリを取得します。
 - `httpdate`: HTTP の `Date` / `Expires` / `Last-Modified` を解析します（追加の依存先なし）。
 - `futures-util`（`std` のみ）: 最大16件の並列メタデータ取得・tarball ダウンロード。
-- `tar` / `flate2`: Rust 内で tar/gzip 展開。`sha2` / `sha1` / `base64`: SRI integrity 検証、キャッシュキー生成。
+- `tar` / `flate2`: Rust 内で tar/gzip 展開と公開用 tarball の生成。`sha2` / `sha1` / `base64`: SRI integrity 検証、キャッシュキー生成、公開メタデータ。
+- `ignore`: pack / publish の `files` と `.npmignore` / `.gitignore` パターンの照合。
+- `rpassword`: legacy ログインの端末上のパスワード入力を非表示にします。
 - `libc`: Linux の `FICLONE` ioctl。macOS は `clonefile` を直接呼び出し、どちらも clone 非対応時は通常コピーにフォールバックします。
 - `unicode-width`（デフォルト feature なし）: `outdated` と `update` の表を文字列の表示幅で揃えます。

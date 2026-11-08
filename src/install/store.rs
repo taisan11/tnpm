@@ -248,6 +248,16 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
         bail!("only HTTP(S) tarballs without URL credentials are supported");
     }
     let integrity = entry.str("integrity");
+    if let Some(bytes) = ctx.source_tarballs.borrow().get(resolved) {
+        verify(bytes, integrity)?;
+        return Ok(bytes.clone());
+    }
+    if let Some(cache) = source_tarball_cache(ctx, entry)
+        && let Ok(bytes) = fs::read(cache)
+    {
+        verify(&bytes, integrity)?;
+        return Ok(bytes);
+    }
     let authorization = ctx.config.authorization(&url)?;
     if ctx.offline() {
         bail!("ENOTCACHED: tarball {resolved}");
@@ -270,7 +280,56 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
     }
     let bytes = response.bytes().await?.to_vec();
     verify(&bytes, integrity)?;
+    if entry
+        .str("tnpmSpec")
+        .is_some_and(super::sources::is_tarball)
+    {
+        remember_source_tarball(ctx, entry, &bytes)?;
+    }
     Ok(bytes)
+}
+
+fn source_tarball_cache(ctx: &Context<'_>, entry: &Value) -> Option<PathBuf> {
+    if ctx.options.no_cache
+        || !entry
+            .str("tnpmSpec")
+            .is_some_and(super::sources::is_tarball)
+    {
+        return None;
+    }
+    let resolved = entry.str("resolved")?;
+    let url = reqwest::Url::parse(resolved).ok()?;
+    if ctx.config.authenticated(&url) {
+        return None;
+    }
+    let integrity = entry.str("integrity")?;
+    let key = format!("{resolved}\n{integrity}");
+    Some(
+        dirs::home_dir()?
+            .join(".tnpm/cache/source-tarballs-v1")
+            .join(format!("{:x}.tgz", Sha256::digest(key.as_bytes()))),
+    )
+}
+
+pub(super) fn remember_source_tarball(
+    ctx: &Context<'_>,
+    entry: &Value,
+    bytes: &[u8],
+) -> Result<()> {
+    verify(bytes, entry.str("integrity"))?;
+    if let Some(cache) = source_tarball_cache(ctx, entry)
+        && let Err(error) = private_cache_write(&cache, bytes)
+    {
+        crate::util::style::progress::message(format_args!(
+            "tnpm: could not cache source tarball: {error}"
+        ));
+    }
+    if let Some(resolved) = entry.str("resolved") {
+        ctx.source_tarballs
+            .borrow_mut()
+            .insert(resolved.to_owned(), bytes.to_vec());
+    }
+    Ok(())
 }
 
 fn private_cache_write(path: &Path, bytes: &[u8]) -> Result<()> {

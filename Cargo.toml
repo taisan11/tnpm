@@ -1,6 +1,6 @@
 [package]
 name = "tnpm"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
@@ -11,6 +11,7 @@ dirs = "7"
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 httpdate = "1"
+ignore = "0.4"
 libc = "0.2"
 mimalloc = "0.1.52"
 nojson = "0.3.15"
@@ -23,6 +24,7 @@ oxc_span = "0.156"
 oxc_transformer = "0.156"
 phf = { version = "0.14", features = ["macros"] }
 reqwest = { version = "0.13", features = ["gzip", "brotli", "deflate", "zstd"] }
+rpassword = "7"
 rustc-hash = "2.1"
 self-replace = "1.5.1"
 sha1 = "0.10"
@@ -31,6 +33,6 @@ simdutf8 = "0.1.5"
 swc_core = { version = "83", features = ["common", "ecma_ast", "ecma_parser", "ecma_codegen", "ecma_transforms_module", "ecma_helpers_inline", "ecma_visit"] }
 tar = "0.4"
 tempfile = "3"
-tokio = { version = "1", default-features = false, features = ["rt"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
 unicode-width = { version = "0.2", default-features = false }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }

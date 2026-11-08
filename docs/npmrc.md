@@ -1,5 +1,7 @@
 # .npmrc と npm: エイリアス
 
+`login` / `logout` による user npmrc の更新と公開時の `publishConfig` は [認証と公開](publishing.md) を参照してください。
+
 [npm v12 の .npmrc 仕様](https://docs.npmjs.com/cli/v12/configuring-npm/npmrc)を参考に、tnpm で使用する設定を読み込みます。npm の全コマンド・全設定オプションの互換実装ではありません。
 
 ## 設定ファイルと優先順位
@@ -33,7 +35,7 @@ node-options = "${NODE_OPTIONS?} --use-system-ca"
 
 ## レジストリと認証
 
-`@scope:registry` はそのスコープの参照先に適用します。明示的な `--registry` はスコープ設定より優先します。`view` とインストール系コマンドは同じ選択・認証処理を使います。
+`@scope:registry` はそのスコープの参照先に適用します。明示的な `--registry` はスコープ設定より優先します。`view` とインストール系コマンド、`audit` は同じ選択・認証処理を使います。`audit-level`（info / low / moderate / high / critical / none）で audit の終了コードの閾値を設定でき、CLI の `--audit-level` が優先します。
 
 ```ini
 @jsr:registry = https://npm.jsr.io/
@@ -53,6 +55,8 @@ node-options = "${NODE_OPTIONS?} --use-system-ca"
 
 ## JSR の npm エイリアス
 
+`jsr:@scope/package@RANGE` を直接使用できます。`tnpm add jsr:@luca/cases` は `jsr:` 指定を保存し、内部で公式の npm 互換パッケージを解決します。`@jsr:registry` の既定値は `https://npm.jsr.io/` なので設定追加は不要です。以下のエイリアス形式も引き続き使えます。[JSR と URL import](jsr-and-url-imports.md)。
+
 たとえば `package.json` に次の依存がある場合:
 
 ```json
@@ -63,7 +67,7 @@ node-options = "${NODE_OPTIONS?} --use-system-ca"
 }
 ```
 
-`.npmrc` の `@jsr:registry=https://npm.jsr.io/` を使用して `@jsr/taisan11__vite-plugin-budoux-build` を取得し、`node_modules/@taisan11/vite-plugin-budoux-build` に配置します。エイリアス名をレジストリには問い合わせません。
+組み込みの `@jsr:registry=https://npm.jsr.io/`（npmrc / `--registry` で上書き可）を使用して `@jsr/taisan11__vite-plugin-budoux-build` を取得し、`node_modules/@taisan11/vite-plugin-budoux-build` に配置します。エイリアス名をレジストリには問い合わせません。
 
 `outdated` はエイリアス名を表・JSON のキーとして保ち、参照先の declared range から wanted、参照先の `latest` タグから latest を調べます。current はエイリアス名のインストール先から読み、存在しなければ `MISSING` です。`MISSING` 自体は `.npmrc` のエラーではありません。
 

@@ -50,4 +50,4 @@
 cargo test
 ```
 
-これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspace / file / Git ソースも共通の peer 解決を使用しますが、HTTP tarball URL の直接指定など、パッケージマネージャー全体で未対応の依存形式は peer に指定しても未対応です。[依存ソースの仕様と制限](dependency-sources.md)。
+これは npm の非公開 Arborist アルゴリズムをそのまま移植したものではありません。同じ制約を満たす複数の解があるとき、npm と同じバージョン・物理配置になる保証はありません。workspace / file / Git / HTTP(S) tarball URL ソースも共通の peer 解決を使用します。[依存ソースの仕様と制限](dependency-sources.md)。

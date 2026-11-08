@@ -19,6 +19,7 @@ pub(super) struct Context<'a> {
     pub(super) source_root: RefCell<std::path::PathBuf>,
     pub(super) workspaces: RefCell<Vec<crate::workspaces::Workspace>>,
     node_version: RefCell<Option<Option<String>>>,
+    pub(super) source_tarballs: RefCell<FxHashMap<String, Vec<u8>>>,
 }
 
 impl<'a> Context<'a> {
@@ -35,6 +36,7 @@ impl<'a> Context<'a> {
             source_root: RefCell::new(std::env::current_dir().unwrap_or_default()),
             workspaces: RefCell::new(Vec::new()),
             node_version: RefCell::new(None),
+            source_tarballs: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -148,6 +150,7 @@ impl<'a> Context<'a> {
             return Ok(data);
         }
         let (name, spec) = spec::registry_dependency(name, spec)?;
+        let name = name.as_ref();
         let key = (name.to_owned(), spec.to_owned(), latest_only);
         if let Some(versions) = self.versions.borrow().get(&key) {
             return Ok(versions.clone());

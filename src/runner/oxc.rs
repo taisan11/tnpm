@@ -13,6 +13,10 @@ use oxc_transformer::{TransformOptions, Transformer};
 pub fn transform(path: &Path, commonjs: bool) -> Result<String> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
+    transform_source(path, source, commonjs)
+}
+
+pub(super) fn transform_source(path: &Path, source: String, commonjs: bool) -> Result<String> {
     let source_type = SourceType::from_path(path)
         .map_err(|err| anyhow!("unsupported source file {}: {err}", path.display()))?;
     let allocator = Allocator::default();
@@ -81,6 +85,29 @@ pub fn transform(path: &Path, commonjs: bool) -> Result<String> {
 
 /// Resolve an import from the importing file, using its nearest tsconfig.
 pub fn resolve(parent: &Path, specifier: &str, conditions: &[String]) -> Result<PathBuf> {
+    resolve_with(parent, specifier, conditions, true)
+}
+
+/// Protocol imports identify a package, never a tsconfig alias with the same name.
+pub(super) fn resolve_package(
+    directory: &Path,
+    specifier: &str,
+    conditions: &[String],
+) -> Result<PathBuf> {
+    resolve_with(
+        &directory.join(".tnpm-runner-import.mjs"),
+        specifier,
+        conditions,
+        false,
+    )
+}
+
+fn resolve_with(
+    parent: &Path,
+    specifier: &str,
+    conditions: &[String],
+    tsconfig: bool,
+) -> Result<PathBuf> {
     let parent = if parent.is_absolute() {
         parent.to_path_buf()
     } else {
@@ -89,7 +116,7 @@ pub fn resolve(parent: &Path, specifier: &str, conditions: &[String]) -> Result<
             .join(parent)
     };
     let options = ResolveOptions {
-        tsconfig: Some(TsconfigDiscovery::Auto),
+        tsconfig: tsconfig.then_some(TsconfigDiscovery::Auto),
         condition_names: conditions.to_vec(),
         extensions: [
             ".js", ".json", ".node", ".ts", ".tsx", ".jsx", ".mts", ".cts", ".mjs", ".cjs",

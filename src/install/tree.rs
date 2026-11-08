@@ -19,6 +19,28 @@ use store::{
     tarball, unpack,
 };
 
+fn build_state(root: &Path) -> BTreeMap<String, Value> {
+    fs::read_to_string(root.join("node_modules/.tnpm-lock.json"))
+        .ok()
+        .and_then(|text| Value::parse(&text).ok())
+        .and_then(|value| value.get("tnpmBuilds").cloned())
+        .map(|value| value.members().iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn build_fingerprint(entry: &Value, data: &Value, directory: &Path) -> Value {
+    let mut value = lockfile::copy_fields(entry, &["name", "version", "resolved", "integrity"]);
+    value.set(
+        "scripts",
+        data.get("scripts").cloned().unwrap_or(Value::Null),
+    );
+    value.set(
+        "native",
+        Value::Bool(scripts::implicit_native(directory, data)),
+    );
+    value
+}
+
 fn retain_reachable(
     lock: &Lockfile,
     manifest: &Value,
@@ -331,6 +353,12 @@ pub(super) async fn materialize(
         bail!("EBADPLATFORM: unsupported OS/CPU/libc for root");
     }
     let scripts_enabled = !ctx.options.ignore_scripts && !ctx.config.enabled("ignore-scripts");
+    let trust = super::trust::Trust::new(manifest, ctx.options)?;
+    let mut builds = if clean {
+        BTreeMap::new()
+    } else {
+        build_state(root)
+    };
     let mut selected = BTreeSet::new();
     for (path, entry) in &lock.packages {
         if path.is_empty() || ctx.omit(entry) {
@@ -555,14 +583,26 @@ pub(super) async fn materialize(
         }
         if scripts_enabled {
             // Nested dependencies first; all binaries already exist before any lifecycle hook.
-            let mut order: Vec<_> = changed.iter().collect();
+            let mut order: Vec<_> = selected.iter().cloned().collect();
             order.sort_by_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
-            for path in order {
+            for path in &order {
                 if !selected.contains(path) {
                     continue;
                 }
                 let directory = root.join(path);
                 if let Some(data) = manifest::read(&directory)? {
+                    if !super::trust::Trust::has_scripts(&directory, &data, &lock.packages[path]) {
+                        continue;
+                    }
+                    if !trust.allows(&lock.packages[path], &data) {
+                        super::trust::Trust::warn(path, &data);
+                        builds.remove(path);
+                        continue;
+                    }
+                    let fingerprint = build_fingerprint(&lock.packages[path], &data, &directory);
+                    if !changed.contains(path) && builds.get(path) == Some(&fingerprint) {
+                        continue;
+                    }
                     for event in ["preinstall", "install", "postinstall", "prepare"] {
                         if event == "prepare" && lock.packages[path].str("tnpmSpec").is_none() {
                             continue;
@@ -585,6 +625,9 @@ pub(super) async fn materialize(
                             break;
                         }
                     }
+                    if selected.contains(path) {
+                        builds.insert(path.clone(), fingerprint);
+                    }
                 }
             }
             for event in [
@@ -600,10 +643,12 @@ pub(super) async fn materialize(
         }
         let mut hidden = lock.clone();
         hidden.packages.retain(|path, _| selected.contains(path));
-        write_json(
-            &root.join("node_modules/.tnpm-lock.json"),
-            &hidden.value(manifest, true),
-        )?;
+        builds.retain(|path, _| {
+            selected.contains(path) && (scripts_enabled || !changed.contains(path))
+        });
+        let mut hidden_value = hidden.value(manifest, true);
+        hidden_value.set("tnpmBuilds", Value::Object(builds.into_iter().collect()));
+        write_json(&root.join("node_modules/.tnpm-lock.json"), &hidden_value)?;
         Ok(())
     }
     .await;
@@ -614,6 +659,100 @@ pub(super) async fn materialize(
     if ctx.options.command != "update" {
         summary(ctx.options, "installed", changed.len());
     }
+    Ok(())
+}
+
+pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
+    anyhow::ensure!(
+        ctx.options.passthrough.is_empty(),
+        "unexpected arguments after --"
+    );
+    anyhow::ensure!(
+        !ctx.options.lock_only,
+        "rebuild does not support --package-lock-only"
+    );
+    let project = manifest::read(root)?.context("rebuild requires package.json")?;
+    let trust = super::trust::Trust::new(&project, ctx.options)?;
+    let mut installed = snapshot(ctx, root)?;
+    // Scanned manifests do not have source identities; retain them from a matching lock.
+    if let Some(lock) = Lockfile::read(root)? {
+        for (path, data) in &mut installed.packages {
+            if let Some(entry) = lock
+                .packages
+                .get(path)
+                .filter(|e| e.str("version") == data.str("version"))
+            {
+                for key in ["name", "resolved", "integrity", "tnpmSpec"] {
+                    if let Some(value) = entry.get(key) {
+                        data.set(key, value.clone());
+                    }
+                }
+            }
+        }
+    }
+    let all: BTreeSet<_> = installed.packages.keys().cloned().collect();
+    let mut selected = BTreeSet::new();
+    if ctx.options.arguments.is_empty() {
+        selected = all.clone();
+    } else {
+        for query in &ctx.options.arguments {
+            let mut found = false;
+            for (path, entry) in &installed.packages {
+                if crate::spec::matches_query(query, path, entry)? {
+                    selected.insert(path.clone());
+                    found = true;
+                }
+            }
+            anyhow::ensure!(found, "no installed dependency matches: {query}");
+        }
+    }
+    // Reject symlink escapes before relinking binaries or executing any hook.
+    for path in &all {
+        ensure_install_path(ctx, root, path, &installed)?;
+    }
+    let mut order: Vec<_> = selected.into_iter().collect();
+    order.sort_by_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
+    link_bins(ctx, root, &all, &installed)?;
+    let enabled = !ctx.options.ignore_scripts && !ctx.config.enabled("ignore-scripts");
+    let mut builds = build_state(root);
+    // A failed rebuild must not leave an old successful-build marker behind.
+    remove_path(&root.join("node_modules/.tnpm-lock.json"))?;
+    let mut count = 0;
+    if enabled {
+        for path in order {
+            let directory = root.join(&path);
+            let data = manifest::read(&directory)?.context("installed dependency disappeared")?;
+            let entry = &installed.packages[&path];
+            if !super::trust::Trust::has_scripts(&directory, &data, entry) {
+                continue;
+            }
+            if !trust.allows(entry, &data) {
+                super::trust::Trust::warn(&path, &data);
+                builds.remove(&path);
+                continue;
+            }
+            for event in ["preinstall", "install", "postinstall", "prepare"] {
+                if event == "prepare" && entry.get("tnpmSpec").is_none() {
+                    continue;
+                }
+                ctx.lifecycle(&directory, &data, event)?;
+            }
+            builds.insert(path.clone(), build_fingerprint(entry, &data, &directory));
+            count += 1;
+        }
+    }
+    // Re-scan after hooks and refresh binaries without losing successful build state.
+    let refreshed = scan(ctx, root)?;
+    for path in refreshed.packages.keys() {
+        ensure_install_path(ctx, root, path, &refreshed)?;
+    }
+    let paths = refreshed.packages.keys().cloned().collect();
+    link_bins(ctx, root, &paths, &refreshed)?;
+    builds.retain(|path, _| refreshed.packages.contains_key(path));
+    let mut hidden = refreshed.value(&project, true);
+    hidden.set("tnpmBuilds", Value::Object(builds.into_iter().collect()));
+    write_json(&root.join("node_modules/.tnpm-lock.json"), &hidden)?;
+    summary(ctx.options, "rebuilt", count);
     Ok(())
 }
 

@@ -9,10 +9,17 @@ src/
   cli.rs                   引数とオプション
   config.rs                npmrc・環境変数・CLI 設定の優先順位
   config/http.rs           共通のレジストリ選択・スコープ別認証・TLS 設定
+  config/credentials.rs    user npmrc の秘密情報の atomic な保存・削除
   commands/
+    auth.rs                login / adduser / logout / whoami
+    publish.rs             pack / publish / dist-tag と公開メタデータ
+    publish/pack.rs         ファイル選択・決定的な tarball の生成
+    registry.rs            認証・公開用の非キャッシュ通信、エラーの秘密情報除去
     cache.rs               グローバルキャッシュの容量集計・全削除
     init.rs                ローカル package.json の初期化
     packages.rs            ls / fund とインストール済み依存の参照
+    explain.rs             why / explain、ロック済み依存の要求元と最短経路
+    workspace_run.rs       workspace スクリプトの並列・依存順実行
     run.rs                 run コマンドと pre/post フック
     version.rs             version コマンド、ファイル更新・Git 操作
     view.rs                view コマンド、フィールド選択
@@ -22,6 +29,8 @@ src/
     report.rs              更新前後の差分と結果表示（表 / JSON）
     context.rs             実行単位の設定・HTTP client・メタデータのメモ化
     sources.rs             ローカル依存・workspace ソース・Git archive のコミット固定
+    audit.rs               設定レジストリごとの Bulk Advisory 検査
+    trust.rs               組み込み + root + CLI の lifecycle 許可集合
     bundles.rs             bundled dependency の manifest・物理配置と archive 内パス
     overrides.rs           root overrides と論理祖先の条件伝播
     platform.rs            os / cpu / libc・Node.js engines の検証
@@ -39,6 +48,8 @@ src/
   manifest.rs              package.json の読み込みと検証
   semver.rs                SemVer の解析・比較・範囲・増分
   spec.rs                  パッケージ名とバージョン／タグ／範囲指定の解析
+  jsr.rs                   jsr: 指定と公式 npm 互換名への変換
+  runner/remote.rs          HTTP(S) ソース取得・検証・private cache と隔離パッケージ解決
   workspaces.rs            symlink を辿らない workspace 探索・選択
   global.rs                ユーザー領域のグローバル配置・bin の所有管理
   util/style/

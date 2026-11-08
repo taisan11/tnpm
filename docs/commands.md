@@ -11,6 +11,7 @@ tnpm init -y                     # package.json を既定値で作成
 tnpm install                     # tnpm-lock.json / node_modules を生成
 tnpm i react                     # dependencies に保存
 tnpm add react                   # install のエイリアス
+tnpm add jsr:@luca/cases          # JSR の公式 npm 互換配布物をインストール
 tnpm i typescript -D             # devDependencies に保存
 tnpm i react@19.0.0 -E           # 完全一致バージョンを保存
 tnpm ci --ignore-scripts         # lockfile を使ってクリーンインストール
@@ -34,6 +35,12 @@ tnpm ls                         # 直接依存
 tnpm ls --all                   # 推移的依存も表示
 tnpm ls --depth=1 --json
 tnpm ls @scope/package          # 名前で絞り込み
+tnpm why react                  # lockfile の要求元とルートからの経路
+tnpm explain 'react@^19' --json
+tnpm rebuild esbuild            # インストール済み依存を再ビルド（通信なし）
+tnpm rebuild my-native --trust my-native # この実行だけ追加で許可
+tnpm audit --audit-level=high   # high 以上で終了コード 1
+tnpm audit --omit=dev --json
 tnpm fund                       # 依存の支援 URL（ブラウザは開かない）
 tnpm fund --json
 tnpm version                    # プロジェクトと tnpm のバージョン
@@ -49,12 +56,19 @@ tnpm view 'react@^19' version --json
 tnpm get registry
 tnpm get registry cache
 tnpm get --json
+tnpm login                        # 表示 URL で Web 認証し user npmrc に保存
+tnpm whoami
+tnpm logout
+tnpm pack --dry-run --json         # 公開内容を確認
+tnpm publish --access public
+tnpm dist-tag add example@1.0.0 next
 tnpm cache                        # キャッシュの種類別容量と合計
 tnpm cache --json                 # バイト単位の容量・ファイル数
 tnpm cache rm                     # tnpm の全キャッシュを削除
 ```
 
 - 共通オプション: `--json`、`--prefix PATH`、`--registry URL`、`--userconfig PATH`、`--globalconfig PATH`、`--help`。通信コマンドには `--no-cache`。
+- 認証系 `login` / `adduser` / `logout` / `whoami`、公開系 `pack` / `publish` / `dist-tag` のオプション・ファイル選択・制限は [認証と公開](publishing.md) を参照してください。
 - 出力: `update` は更新前後のバージョン表を表示します。更新不要なら `No packages were updated.`、`outdated` で対象がなければ `All dependencies are up to date.`。通信・キャッシュ・展開・配置は `[処理済み/確認済み]` の進捗を stderr の同じ1行で更新します（リダイレクト時は追記）。警告や結果表示は上書きしません。成功・失敗・ヘルプを問わず最後に `tnpm vX.X.X(ビルド時コミットハッシュ)` を stderr に出します（JSON の stdout は汚しません）。[出力形式と進捗](cli-output.md)。
 - 通常の `update` は宣言された SemVer 範囲内で更新します。`^1.2.3` なら major を越えませんが、`*` / `>=1` / OR 条件など、宣言自体が複数 major を許す場合は越えることがあります。`--latest` はこの範囲を越えて `latest` タグへ更新します。
 - `install` / `i` / `add`: レジストリ依存を解決し、巻き上げ・競合時のネスト・スコープ付きパッケージ・循環参照に対応した `node_modules` を作成。`tnpm-lock.json` を使用し、npm の `package-lock.json` は読み書きしません。`--no-save` では生成しません。互換な lockfile があれば再解決せず利用します。`-D` / `-O` / `-E` / `--no-save` / `--package-lock-only` / `--omit=dev,optional` / `--production` / `--ignore-scripts` に対応。
@@ -70,6 +84,9 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 - `create NAME [ARGS...]`: `create-NAME` を取得・実行する独立したコマンドです。バージョン・タグ・スコープ付きパッケージを指定でき、NAME より後の引数は initializer へそのまま転送します（`--` は省略可）。tnpm 自体のオプションは NAME より前に指定します。NAME は必須で、`init` へのフォールバックはありません。
 - `outdated` の通常表示は枠付き・端末上では色付きの表です。`--plain` は従来の枠なし・色なし形式、`--json` は JSON です。色は `colored` を使用し、リダイレクト時は既定で無効、`NO_COLOR` でも無効化できます。
 - `peerDependencies`: 既定で必須 peer を自動取得し、peer set の共有・分離とバージョン再探索を行い、不一致は警告します。`--legacy-peer-deps` で解決を無効化でき、`--strict-peer-deps` では不一致を `ERESOLVE` にします。[仕様と検証範囲](peer-dependencies.md)。
+- 依存の install script は既定で許可リスト制です。Bun 由来の既定リストにルートの `trustedDependencies` / `--trust NAME` を追加し、`--ignore-scripts` は許可済みのものも止めます。`rebuild [NAME|NAME@RANGE|NODE_MODULES_PATH...]` は同じ許可判定で既存依存の preinstall / install / postinstall とソース依存の prepare、暗黙の node-gyp、bin 再生成を行います。manifest / lockfile を変更せず、通信しません。
+- `explain` / `why`: パッケージ名・名前と SemVer 範囲・プロジェクト相対 node_modules パスでロック済み依存を選択します。全直接要求元の種類・範囲とルートからの最短経路の一例を表示し、`--json` は配列を返します。複数指定可。未一致はエラーです。
+- `audit`: 整合する `tnpm-lock.json` が必要で、node_modules は不要です。Bulk Advisory API に名前とバージョンだけを送り、該当 advisory と影響箇所を表示します。`--audit-level` は表示対象ではなく失敗の閾値で、info（既定）/ low / moderate / high / critical / none に対応します。ローカル・Git・tarball URL・workspace 自体は除外し、スコープ別レジストリを尊重します。自動修正はしません。詳細は [信頼設定と依存調査](security-and-diagnostics.md)。
 - `ls`: `node_modules` を読み、巻き上げられた依存・スコープ付きパッケージ・循環参照に対応。必須依存の欠落やバージョン不一致は終了コード 1。デフォルトは直接依存のみ。
 - `fund`: インストール済み依存を再帰的に調べ、文字列・オブジェクト・配列形式の `funding` を表示。
 - `version`: 明示的な SemVer、`major`、`minor`、`patch`、`premajor`、`preminor`、`prepatch`、`prerelease`、`from-git` に対応。`tnpm-lock.json` があればルートのバージョンも同期。Git 管理下ではクリーンな状態を確認してコミット・注釈付きタグを作成します。`--no-git-tag-version` で無効化できます。`preversion` / `version` / `postversion` スクリプトは `--ignore-scripts` で無効化でき、同一バージョンへの更新は `--allow-same-version` で許可できます。
@@ -78,3 +95,4 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 - `cache`: `~/.tnpm/cache`（レジストリの旧形式・tarball・展開済みパッケージも含む）と `~/.tnpm/exec` の容量を、直下の種類別・合計で表示します。ディスク割り当て量と通常ファイルの論理サイズ・件数を分け、`--json` は正確なバイト数を返します。CoW / hardlink の共有ブロックは重複計上される場合があり、実際に解放される容量とは限りません。
 - `cache rm`: 上記2ディレクトリを確認なしで削除します。`--json` は削除したパス一覧です。npm のキャッシュ、プロジェクトの node_modules / hidden lockfile、その他の `~/.tnpm` 内ファイルは変更しません。シンボリックリンクは参照先を辿らず、`~/.tnpm` 自体がリンクなら拒否します。project / npmrc / `--prefix` に依存せず実行でき、未作成なら容量0・削除なしで成功します。install / exec と同時には実行しないでください。[出力仕様](cli-output.md#cache)。
 - `npm:` エイリアス依存: `"local-name": "npm:real-package@^1"` のような宣言を解決し、実体の名前を維持しながら `node_modules/local-name` に配置します。スコープ付きパッケージと `tnpm install 'alias@npm:real-package@^1'` に対応します。
+- `jsr:` 依存: `tnpm add jsr:@scope/package@RANGE` と `"name": "jsr:@scope/package@RANGE"` に対応します。公式 npm 互換名へ内部変換し、元の宣言と配置名を保持します。`view jsr:@scope/package`、outdated / update / ci / peer も共通処理を使います。直接実行では HTTP(S) / jsr: / npm: import を解決します。[JSR と URL import](jsr-and-url-imports.md)。

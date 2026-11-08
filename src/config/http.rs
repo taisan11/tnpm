@@ -73,6 +73,14 @@ impl Config {
         self.credential_scope(url, PRIVATE).is_some()
     }
 
+    pub fn auth_scope<'a>(&'a self, url: &Url) -> Option<&'a str> {
+        self.credential_scope(url, AUTH)
+    }
+
+    pub fn client_authenticated(&self, url: &Url) -> bool {
+        self.scoped(url, "certfile").is_some() && self.scoped(url, "keyfile").is_some()
+    }
+
     pub fn authorization(&self, url: &Url) -> Result<Option<HeaderValue>> {
         let Some(scope) = self.credential_scope(url, AUTH) else {
             return Ok(None);
@@ -128,13 +136,50 @@ impl Config {
     }
 
     pub fn http_client(&self, url: &Url, tarball: bool) -> Result<reqwest::Client> {
+        self.build_http_client(url, tarball, false, false, false)
+    }
+
+    pub fn audit_client(&self, url: &Url) -> Result<reqwest::Client> {
+        self.build_http_client(url, false, true, false, false)
+    }
+
+    pub fn remote_client(&self, url: &Url) -> Result<reqwest::Client> {
+        self.build_http_client(url, false, false, true, false)
+    }
+
+    /// Login bodies and publication data must never be replayed to a redirect target.
+    pub fn registry_write_client(&self, url: &Url) -> Result<reqwest::Client> {
+        self.build_http_client(url, false, false, false, true)
+    }
+
+    fn build_http_client(
+        &self,
+        url: &Url,
+        tarball: bool,
+        audit: bool,
+        remote: bool,
+        no_redirect: bool,
+    ) -> Result<reqwest::Client> {
         let boundary = self.credential_scope(url, PRIVATE).map(str::to_owned);
         let origin = url.origin();
+        let https = url.scheme() == "https";
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                if attempt.previous().len() >= 5 {
+                if no_redirect {
+                    attempt.stop()
+                } else if attempt.previous().len() >= 5 {
                     attempt.error("too many redirects")
+                } else if remote
+                    && (!matches!(attempt.url().scheme(), "http" | "https")
+                        || !attempt.url().username().is_empty()
+                        || attempt.url().password().is_some()
+                        || (https && attempt.url().scheme() != "https"))
+                {
+                    attempt.error("unsafe remote module redirect")
+                } else if audit && attempt.url().origin() != origin {
+                    // Audit POST bodies contain private dependency names, even without credentials.
+                    attempt.stop()
                 } else if boundary.as_deref().is_some_and(|scope| {
                     attempt.url().origin() != origin || !matches(scope, attempt.url())
                 }) {

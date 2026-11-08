@@ -14,6 +14,7 @@ use rustc_hash::FxHashMap;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::Path};
 
+mod audit;
 mod bundles;
 mod context;
 mod overrides;
@@ -23,6 +24,7 @@ mod resolver;
 mod sources;
 mod store;
 mod tree;
+mod trust;
 mod update;
 
 use context::Context;
@@ -30,6 +32,57 @@ use resolver::{descriptor, resolve};
 use tree::materialize;
 
 const CONCURRENCY: usize = 16;
+
+/// Runner imports use the same verified installer, isolated from project manifests.
+pub(crate) async fn runtime_package(
+    project: &Path,
+    name: &str,
+    selector: &str,
+    options: &Options,
+    config: &Config,
+) -> Result<std::path::PathBuf> {
+    let (target, _) = spec::registry_dependency(name, selector)?;
+    let registry = config.registry_url(target.as_ref(), options.registry.as_deref())?;
+    let key = format!("{name}\n{selector}\n{registry}");
+    let root = dirs::home_dir()
+        .context("home directory not found")?
+        .join(".tnpm/exec")
+        .join(format!("runner-{:x}", Sha256::digest(key.as_bytes())));
+    fs::create_dir_all(&root)?;
+    let mut isolated = options.clone();
+    isolated.command = "runner-import".into();
+    isolated.json = true;
+    isolated.ignore_scripts = true;
+    isolated.arguments.clear();
+    isolated.passthrough.clear();
+    isolated.workspace.clear();
+    isolated.workspaces = false;
+    let ctx = Context::new(&isolated, config);
+    *ctx.source_root.borrow_mut() = fs::canonicalize(&root)?;
+    let mut manifest = Value::object();
+    manifest.set("name", Value::from("tnpm-runner-import"));
+    let mut dependencies = Value::object();
+    dependencies.set(name, Value::from(selector));
+    manifest.set("dependencies", dependencies);
+    let old = if options.no_cache {
+        None
+    } else {
+        Lockfile::read(&root)?
+    };
+    let lock = resolve(
+        &ctx,
+        &manifest,
+        old.as_ref(),
+        options.no_cache,
+        FxHashMap::default(),
+    )
+    .await?;
+    lock.write(&root, &manifest)?;
+    materialize(&ctx, &root, &manifest, &lock, false)
+        .await
+        .with_context(|| format!("could not prepare runtime import in {}", project.display()))?;
+    Ok(root)
+}
 
 pub(crate) fn workspace_manifest(root: &Path, data: &Value) -> Result<Value> {
     sources::effective(root, data).map(|(data, _)| data)
@@ -52,6 +105,9 @@ fn flag(data: &Value, key: &str) -> bool {
 }
 
 fn summary(options: &Options, action: &str, count: usize) {
+    if options.command == "runner-import" {
+        return;
+    }
     crate::util::style::progress::finish();
     if matches!(options.command.as_str(), "exec" | "create") {
         eprintln!(
@@ -89,6 +145,8 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         "exec" | "create" => return exec(&ctx, root).await,
         "outdated" => return outdated(&ctx, root).await,
         "prune" => return tree::prune(&ctx, root),
+        "rebuild" => return tree::rebuild(&ctx, root),
+        "audit" => return audit::run(&ctx, root).await,
         _ => {}
     }
     if !options.passthrough.is_empty() {
@@ -98,6 +156,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         bail!("ci accepts neither packages nor --package-lock-only");
     }
     let mut manifest = manifest::read(root)?.unwrap_or_else(Value::object);
+    trust::Trust::new(&manifest, options)?;
     overrides::validate(&manifest)?;
     if options.command == "ci" && !root.join("package.json").is_file() {
         bail!("ci requires package.json");
@@ -233,6 +292,16 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
                     } else {
                         source.to_owned()
                     }
+                } else if let Some(jsr) = selector.as_deref().filter(|s| s.starts_with("jsr:")) {
+                    let parsed = crate::jsr::Specifier::parse(jsr)?;
+                    let range = if options.save_exact {
+                        version.to_owned()
+                    } else if parsed.range == "latest" {
+                        format!("^{version}")
+                    } else {
+                        parsed.range.to_owned()
+                    };
+                    format!("jsr:{}@{range}", parsed.name)
                 } else if let Some(alias) = selector.as_deref().filter(|s| s.starts_with("npm:")) {
                     let (target, _) = spec::dependency_target(&name, alias)?;
                     if options.save_exact {
@@ -331,6 +400,14 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
 }
 
 async fn install_spec(ctx: &Context<'_>, argument: &str) -> Result<(String, Option<String>)> {
+    if argument.starts_with("jsr:") {
+        let parsed = crate::jsr::Specifier::parse(argument)?;
+        anyhow::ensure!(
+            parsed.subpath.is_empty(),
+            "JSR dependencies cannot select an export subpath"
+        );
+        return Ok((parsed.name.to_owned(), Some(argument.to_owned())));
+    }
     let selector = if argument.starts_with("./")
         || argument.starts_with("../")
         || Path::new(argument).is_absolute()
@@ -372,7 +449,7 @@ async fn outdated(ctx: &Context<'_>, root: &Path) -> Result<()> {
         let (target, _) = spec::dependency_target(&dep.name, &dep.spec)?;
         let (wanted, latest) = futures_util::future::try_join(
             ctx.metadata(&dep.name, &dep.spec),
-            ctx.metadata(target, "latest"),
+            ctx.metadata(target.as_ref(), "latest"),
         )
         .await?;
         let current = manifest::read(&root.join("node_modules").join(&dep.name))?
@@ -512,9 +589,25 @@ async fn exec(ctx: &Context<'_>, root: &Path) -> Result<()> {
     fs::create_dir_all(&cache_root)?;
     let mut manifest = Value::object();
     manifest.set("name", Value::from("tnpm-exec"));
+    if let Some(project) = manifest::read(root)?
+        && let Some(trusted) = project.get("trustedDependencies")
+    {
+        manifest.set("trustedDependencies", trusted.clone());
+    }
+    trust::Trust::new(&manifest, ctx.options)?;
     let mut deps = Value::object();
     for spec in &requested {
-        let (name, selector) = spec::package_spec(spec)?;
+        let jsr;
+        let (name, selector) = if spec.starts_with("jsr:") {
+            jsr = crate::jsr::Specifier::parse(spec)?;
+            anyhow::ensure!(
+                jsr.subpath.is_empty(),
+                "exec does not accept JSR export subpaths"
+            );
+            (jsr.name, Some(spec.as_str()))
+        } else {
+            spec::package_spec(spec)?
+        };
         deps.set(name, Value::from(selector.unwrap_or("latest")));
     }
     manifest.set("dependencies", deps);
@@ -531,7 +624,11 @@ async fn exec(ctx: &Context<'_>, root: &Path) -> Result<()> {
         return scripts::command(root, &manifest, "exec", call, &args, Some(&extra));
     }
     let binary = if ctx.options.exec_packages.is_empty() || initializer {
-        let (name, _) = spec::package_spec(&requested[0])?;
+        let name = if requested[0].starts_with("jsr:") {
+            crate::jsr::Specifier::parse(&requested[0])?.name
+        } else {
+            spec::package_spec(&requested[0])?.0
+        };
         let data = manifest::read(&cache_root.join("node_modules").join(name))?
             .context("executable package was not installed")?;
         let bins = scripts::bins(&data);

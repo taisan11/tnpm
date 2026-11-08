@@ -41,7 +41,7 @@ pub(super) async fn latest(
     let responses: Vec<_> =
         stream::iter(requests.into_iter().map(|(field, name, range)| async move {
             let (target, _) = spec::registry_dependency(&name, &range)?;
-            let data = ctx.metadata(target, "latest").await?;
+            let data = ctx.metadata(target.as_ref(), "latest").await?;
             let version = data
                 .str("version")
                 .context("registry version has no version")?;
@@ -77,7 +77,10 @@ fn saved_spec(ctx: &Context<'_>, name: &str, original: &str, version: &str) -> R
         ctx.config.get("save-prefix").unwrap_or("^")
     };
     let saved = format!("{prefix}{version}");
-    Ok(if original.starts_with("npm:") {
+    Ok(if original.starts_with("jsr:") {
+        let jsr = crate::jsr::Specifier::parse(original)?;
+        format!("jsr:{}@{saved}", jsr.name)
+    } else if original.starts_with("npm:") {
         format!("npm:{target}@{saved}")
     } else {
         saved

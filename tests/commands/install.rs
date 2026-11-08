@@ -357,7 +357,7 @@ fn refuses_symlinked_node_modules_and_runs_dependency_hooks() {
     assert!(!f.invoke(&["install"]).status.success());
     assert!(!f.root.join("outside/app").exists());
     fs::remove_file(f.root.join("node_modules")).unwrap();
-    f.ok(&["install"]);
+    f.ok(&["install", "--trust", "app"]);
     assert_eq!(
         fs::read_to_string(f.root.join("node_modules/app/built.txt")).unwrap(),
         "built\n"

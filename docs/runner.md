@@ -16,6 +16,12 @@ The entry must end in `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts` or `.
 
 Entry paths are relative to the invocation directory, or to `--prefix` when specified. Direct execution does not require a package.json. Arguments after the entry are passed directly to Node without shell interpretation. The child inherits standard input, output and error; its normal exit code is propagated. Entry execution does not run npm lifecycle hooks. Node flags before the entry and watch mode are not currently supported; use Node directly for those.
 
+## JSR, npm and URL imports
+
+Direct execution also resolves `jsr:@scope/package@range[/export]`, `npm:package@range[/export]` and HTTP(S) imports. JSR uses its official npm compatibility distribution; matching local installations are preferred, otherwise packages are installed in isolated runner caches with lifecycle hooks disabled. HTTP modules retain their final URL, resolve relative and dynamic imports, and transform TypeScript. JSON imports require `with { type: 'json' }`. Node's existing file, builtin and data URL handling is retained.
+
+Use `tnpm run --offline FILE` for cache-only execution or `tnpm run --no-cache FILE` to reload remote modules. URL caches are not pinned in the project lockfile. Remote CommonJS, URL entry points, Deno APIs and import maps are not supported. These features do not sandbox imported code. See [JSR and URL imports](jsr-and-url-imports.md) for cache, authentication, protocol boundaries and limitations.
+
 ## Package scripts
 
 With no operand, `tnpm run` lists scripts (`--json` emits JSON). Named scripts run from the project root using the system shell, with local `node_modules/.bin` directories on PATH. Arguments are appended to the main script, not its hooks. `pre<name>` and `post<name>` run before and after a successful main script respectively, unless `--ignore-scripts` is set. `--if-present` suppresses errors for missing script names. For direct file operands, a missing file is still an error.

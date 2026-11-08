@@ -6,6 +6,7 @@ mod fs;
 mod global;
 mod install;
 mod json;
+mod jsr;
 mod lockfile;
 mod manifest;
 mod profile;

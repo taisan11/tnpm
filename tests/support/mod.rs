@@ -17,6 +17,8 @@ use std::{
 };
 
 type Authorizations = Arc<Mutex<Vec<(String, Option<String>)>>>;
+type Posts = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+type Writes = Arc<Mutex<Vec<(String, String, Vec<u8>, String)>>>;
 
 pub(crate) fn strip_ansi(text: &str) -> String {
     let mut chars = text.chars().peekable();
@@ -42,7 +44,12 @@ pub(crate) struct Fixture {
     pub(crate) routes: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     pub(crate) requests: Arc<Mutex<Vec<String>>>,
     pub(crate) authorizations: Authorizations,
+    pub(crate) posts: Posts,
+    pub(crate) writes: Writes,
+    pub(crate) statuses: Arc<Mutex<HashMap<String, u16>>>,
     pub(crate) redirects: Arc<Mutex<HashMap<String, String>>>,
+    pub(crate) content_types: Arc<Mutex<HashMap<String, String>>>,
+    pub(crate) cache_controls: Arc<Mutex<HashMap<String, String>>>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -76,12 +83,22 @@ impl Fixture {
         let routes = Arc::new(Mutex::new(HashMap::<String, Vec<u8>>::new()));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let authorizations = Arc::new(Mutex::new(Vec::new()));
+        let posts = Arc::new(Mutex::new(Vec::new()));
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let statuses = Arc::new(Mutex::new(HashMap::<String, u16>::new()));
         let redirects = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+        let content_types = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+        let cache_controls = Arc::new(Mutex::new(HashMap::<String, String>::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let (server_routes, server_requests, server_stop) =
             (routes.clone(), requests.clone(), stop.clone());
         let server_authorizations = authorizations.clone();
+        let server_posts = posts.clone();
+        let server_writes = writes.clone();
+        let server_statuses = statuses.clone();
         let server_redirects = redirects.clone();
+        let server_types = content_types.clone();
+        let server_cache = cache_controls.clone();
         let thread = thread::spawn(move || {
             while !server_stop.load(Ordering::Relaxed) {
                 let (mut socket, _) = match listener.accept() {
@@ -109,6 +126,30 @@ impl Fixture {
                     continue;
                 };
                 server_requests.lock().unwrap().push(path.to_owned());
+                let length = text
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                if socket.read_exact(&mut body).is_err() {
+                    continue;
+                }
+                if matches!(
+                    text.split_whitespace().next(),
+                    Some("POST" | "PUT" | "DELETE" | "PATCH")
+                ) {
+                    server_writes.lock().unwrap().push((
+                        text.split_whitespace().next().unwrap().into(),
+                        path.to_owned(),
+                        body.clone(),
+                        text.to_string(),
+                    ));
+                }
+                if text.starts_with("POST ") {
+                    server_posts.lock().unwrap().push((path.to_owned(), body));
+                }
                 let authorization = text
                     .lines()
                     .filter_map(|line| line.split_once(':'))
@@ -129,15 +170,29 @@ impl Fixture {
                 let body = routes
                     .get(path)
                     .or_else(|| routes.get(&path.replace("%2f", "%2F")));
-                let status = if body.is_some() {
-                    "200 OK"
+                let status = if let Some(status) = server_statuses.lock().unwrap().get(path) {
+                    format!("{status} Fixture")
+                } else if body.is_some() {
+                    "200 OK".into()
                 } else {
-                    "404 Not Found"
+                    "404 Not Found".into()
                 };
                 let body = body.map(Vec::as_slice).unwrap_or(b"not found");
+                let content_type = server_types
+                    .lock()
+                    .unwrap()
+                    .get(path)
+                    .map(|t| format!("Content-Type: {t}\r\n"))
+                    .unwrap_or_default();
+                let cache_control = server_cache
+                    .lock()
+                    .unwrap()
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| "max-age=3600".into());
                 let _ = write!(
                     socket,
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nCache-Control: max-age=3600\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\n{content_type}Cache-Control: {cache_control}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
                 let _ = socket.write_all(body);
@@ -149,7 +204,12 @@ impl Fixture {
             routes,
             requests,
             authorizations,
+            posts,
+            writes,
+            statuses,
             redirects,
+            content_types,
+            cache_controls,
             stop,
             thread: Some(thread),
         }
@@ -162,6 +222,16 @@ impl Fixture {
     }
 
     pub(crate) fn package(&self, name: &str, version: &str, extra: &str) -> String {
+        self.package_files(name, version, extra, &[])
+    }
+
+    pub(crate) fn package_files(
+        &self,
+        name: &str,
+        version: &str,
+        extra: &str,
+        files: &[(&str, &str)],
+    ) -> String {
         let manifest = format!(r#"{{"name":"{name}","version":"{version}"{extra}}}"#);
         let mut archive = tar::Builder::new(Vec::new());
         for (path, data) in [
@@ -171,7 +241,10 @@ impl Fixture {
                 b"#!/bin/sh\nprintf '%s\\n' \"$@\"\n".as_slice(),
             ),
             ("package/index.js", b"module.exports = 42;\n".as_slice()),
-        ] {
+        ]
+        .into_iter()
+        .chain(files.iter().map(|(path, text)| (*path, text.as_bytes())))
+        {
             let mut header = tar::Header::new_gnu();
             header.set_size(data.len() as u64);
             header.set_mode(0o755);

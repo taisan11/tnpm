@@ -5,10 +5,13 @@ Rust 製の軽量な npm 互換パッケージマネージャー。**npm との�
 ## 特徴
 
 - `package.json` の依存関係を解決し、`node_modules` と `tnpm-lock.json` を生成
-- `npm:` エイリアス、`peerDependencies` に対応（npm の `package-lock.json` は読み書きしません）
+- `npm:` エイリアス、`jsr:` パッケージ、`peerDependencies` に対応（npm の `package-lock.json` は読み書きしません）
 - workspaces、`file:` / Git 依存、`overrides`、ユーザー領域へのグローバルインストールに対応
 - 並列ダウンロード、メタデータキャッシュ、展開済みパッケージの再利用でインストールを高速化
 - `run`、`exec`、`outdated`、`update`、`view`、`cache` などの CLI コマンドを提供
+- `login` / `logout` / `whoami` と `pack` / `publish` / `dist-tag` に対応（[認証と公開](docs/publishing.md)）
+- 依存スクリプトの信頼リスト、`rebuild`、`why` / `explain`、`audit`、workspace の並列・依存順実行に対応
+- JS / TS 直接実行で HTTP(S)・`jsr:`・`npm:` import を解決
 
 ## インストール
 
@@ -38,6 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/taisan11/tnpm/main/install.sh | sh
 tnpm init -y                 # package.json の作成
 tnpm install                 # 既存プロジェクトの依存をインストール
 tnpm add react               # 依存パッケージの追加
+tnpm add jsr:@luca/cases     # JSR パッケージを追加
 tnpm add typescript -D       # 開発用依存として追加
 tnpm run build               # package.json のスクリプトを実行
 tnpm build                   # 組み込みコマンドがなければスクリプトを実行
@@ -51,7 +55,7 @@ tnpm upgrade                 # tnpm 本体を最新安定版に更新
 
 ## npm との互換性
 
-npm の一部コマンドと独自 lockfile をサポートしていますが、**完全なドロップイン置換ではありません**。HTTP tarball URL の直接指定、audit などには未対応です。[対応範囲と制限](docs/compatibility.md)・[workspaces と依存ソース](docs/dependency-sources.md) を確認してください。
+npm の一部コマンドと独自 lockfile をサポートしていますが、**完全なドロップイン置換ではありません**。依存スクリプトは既定で許可リスト制です。[対応範囲と制限](docs/compatibility.md)・[workspaces と依存ソース](docs/dependency-sources.md)・[信頼設定と依存調査](docs/security-and-diagnostics.md) を確認してください。
 
 ## ドキュメント・開発
 

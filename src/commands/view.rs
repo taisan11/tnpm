@@ -50,7 +50,18 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
             .context("provide a package name, or run view in a project with a package name")?;
         &local
     };
-    let (name, selector) = package_spec(spec)?;
+    let jsr;
+    let (name, selector) = if spec.starts_with("jsr:") {
+        let parsed = crate::jsr::Specifier::parse(spec)?;
+        anyhow::ensure!(
+            parsed.subpath.is_empty(),
+            "view does not accept JSR export subpaths"
+        );
+        jsr = parsed.npm_name();
+        (jsr.as_str(), Some(parsed.range))
+    } else {
+        package_spec(spec)?
+    };
     let url = config.registry_url(name, options.registry.as_deref())?;
     let authorization = config.authorization(&url)?;
     let no_cache = options.no_cache || config.authenticated(&url);

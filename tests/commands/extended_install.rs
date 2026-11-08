@@ -245,7 +245,7 @@ fn native_default_build_respects_gypfile_and_ignore_scripts() {
     );
     let out = f
         .command()
-        .args(["install"])
+        .args(["install", "--trust", "native"])
         .env("npm_config_node_gyp", f.root.join("fake-gyp.js"))
         .output()
         .unwrap();
@@ -455,7 +455,7 @@ fn bundled_dependencies_are_locked_linked_and_reused_offline() {
     f.routes.lock().unwrap().insert("/parent.tar".into(), bytes);
     f.registry("parent", "1.0.0", &[("1.0.0", format!(r#"{{"name":"parent","version":"1.0.0","dependencies":{{"bundled":"1"}},"bundleDependencies":["bundled"],"peerDependencies":{{"peer":"1"}},"dist":{{"tarball":"{}parent.tar","integrity":"sha512-{integrity}"}}}}"#, f.url))]);
     f.file("package.json", r#"{"dependencies":{"parent":"1"}}"#);
-    f.ok(&["install", "--strict-peer-deps"]);
+    f.ok(&["install", "--strict-peer-deps", "--trust", "bundled"]);
     let bundled = f.root.join("node_modules/parent/node_modules/bundled");
     assert_eq!(
         fs::read_to_string(bundled.join("installed")).unwrap(),

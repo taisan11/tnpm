@@ -6,6 +6,7 @@ static COMMAND_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "remove" => "uninstall",
     "rm" => "uninstall",
     "x" => "exec",
+    "why" => "explain",
 };
 
 #[derive(Clone, Debug, Default)]
@@ -46,6 +47,18 @@ pub struct Options {
     pub engine_strict: bool,
     pub workspaces: bool,
     pub workspace: Vec<String>,
+    pub trust: Vec<String>,
+    pub parallel: bool,
+    pub topological: bool,
+    pub concurrency: Option<usize>,
+    pub audit_level: Option<String>,
+    pub auth_type: Option<String>,
+    pub scope: Option<String>,
+    pub otp: Option<String>,
+    pub tag: Option<String>,
+    pub access: Option<String>,
+    pub dry_run: bool,
+    pub pack_destination: Option<PathBuf>,
 }
 
 const COMMANDS: &[&str] = &[
@@ -67,9 +80,21 @@ const COMMANDS: &[&str] = &[
     "prune",
     "run",
     "alias",
+    "explain",
+    "rebuild",
+    "audit",
+    "login",
+    "adduser",
+    "logout",
+    "whoami",
+    "pack",
+    "publish",
+    "dist-tag",
 ];
 
-const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  ci, init\n  create\n  alias create, alias delete\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --global, -g  --workspace, -w <NAME|PATH>  --workspaces\n  --engine-strict\n  --userconfig <PATH>  --globalconfig <PATH>  --latest\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --no-legacy-peer-deps  --strict-peer-deps  --force, -f\n  --offline  --save-dev, -D  --save-optional, -O\n  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
+const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  explain (alias: why), rebuild, audit\n  ci, init\n  create\n  alias create, alias delete\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --global, -g  --workspace, -w <NAME|PATH>  --workspaces\n  --engine-strict  --trust <PACKAGE>\n  --parallel  --topological  --concurrency <N>  --audit-level <LEVEL>\n  --userconfig <PATH>  --globalconfig <PATH>  --latest\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --no-legacy-peer-deps  --strict-peer-deps  --force, -f\n  --offline  --save-dev, -D  --save-optional, -O\n  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
+
+const PUBLISH_HELP: &str = "\nAuthentication and publication:\n  login, adduser, logout, whoami\n  pack [DIRECTORY], publish [DIRECTORY]\n  dist-tag <ls [PACKAGE]|add PACKAGE@VERSION [TAG]|rm PACKAGE TAG>\n  --auth-type <web|legacy>  --scope <SCOPE>  --otp <CODE>\n  --tag <TAG>  --access <public|restricted>  --dry-run\n  --pack-destination <PATH>\n";
 
 /// Parse tnpm options until an operand starts a script or executable's arguments.
 pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Options>> {
@@ -102,6 +127,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                     | "-p"
                     | "--workspace"
                     | "-w"
+                    | "--trust"
+                    | "--concurrency"
+                    | "--audit-level"
+                    | "--auth-type"
+                    | "--scope"
+                    | "--otp"
+                    | "--tag"
+                    | "--access"
+                    | "--pack-destination"
             );
             let value = if takes_value {
                 Some(if let Some(value) = inline {
@@ -120,7 +154,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
             };
             match name {
                 "--help" | "-h" => {
-                    print!("{HELP}");
+                    print!("{HELP}{PUBLISH_HELP}");
                     return Ok(None);
                 }
                 "--version" | "-V" => {
@@ -133,6 +167,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                 "--registry" => options.registry = value,
                 "--userconfig" => options.userconfig = value,
                 "--globalconfig" => options.globalconfig = value,
+                "--auth-type" => options.auth_type = value,
+                "--scope" => options.scope = value,
+                "--otp" => options.otp = value,
+                "--tag" => options.tag = value,
+                "--access" => options.access = value,
+                "--dry-run" => options.dry_run = true,
+                "--pack-destination" => options.pack_destination = value.map(PathBuf::from),
                 "--all" | "-a" if matches!(options.command.as_str(), "ls" | "prune") => {
                     options.all = true
                 }
@@ -156,6 +197,21 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                 "--engine-strict" => options.engine_strict = true,
                 "--workspaces" => options.workspaces = true,
                 "--workspace" | "-w" => options.workspace.push(value.unwrap()),
+                "--trust" => options.trust.push(value.unwrap()),
+                "--parallel" if options.command == "run" => options.parallel = true,
+                "--topological" if options.command == "run" => options.topological = true,
+                "--concurrency" if options.command == "run" => {
+                    let count = value
+                        .unwrap()
+                        .parse::<usize>()
+                        .context("invalid --concurrency")?;
+                    if count == 0 {
+                        bail!("--concurrency must be greater than zero");
+                    }
+                    options.concurrency = Some(count);
+                    options.parallel = true;
+                }
+                "--audit-level" if options.command == "audit" => options.audit_level = value,
                 "--save-dev" | "-D" => options.save_dev = true,
                 "--save-optional" | "-O" => options.save_optional = true,
                 "--save-exact" | "-E" => options.save_exact = true,
@@ -199,11 +255,43 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
         if !options.passthrough.is_empty() {
             bail!("missing command");
         }
-        print!("{HELP}");
+        print!("{HELP}{PUBLISH_HELP}");
         return Ok(None);
     }
     if options.command == "version" && options.arguments.len() > 1 {
         bail!("version accepts at most one version or release type");
+    }
+    if matches!(
+        options.command.as_str(),
+        "login" | "adduser" | "logout" | "whoami"
+    ) && (!options.arguments.is_empty() || !options.passthrough.is_empty())
+    {
+        bail!("{} does not accept arguments", options.command);
+    }
+    if matches!(options.command.as_str(), "pack" | "publish")
+        && (options.arguments.len() > 1 || !options.passthrough.is_empty())
+    {
+        bail!("{} accepts at most one local directory", options.command);
+    }
+    if options
+        .auth_type
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "web" | "legacy"))
+    {
+        bail!("--auth-type must be web or legacy");
+    }
+    if options
+        .access
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "public" | "restricted"))
+    {
+        bail!("--access must be public or restricted");
+    }
+    if let Some(scope) = &options.scope {
+        let scope = scope.strip_prefix('@').unwrap_or(scope);
+        if !crate::lockfile::valid_name(&format!("@{scope}/package")) || scope.contains('/') {
+            bail!("invalid --scope");
+        }
     }
     if options.command == "alias"
         && (options.arguments.len() != 1
@@ -228,6 +316,25 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
     }
     if options.command == "fund" && !options.arguments.is_empty() {
         bail!("fund currently lists all funding URLs; package/browser selection is not supported");
+    }
+    if options.command == "explain" && options.arguments.is_empty() {
+        bail!("explain requires a package name, name@range, or node_modules path");
+    }
+    if options.command == "audit"
+        && (!options.arguments.is_empty() || !options.passthrough.is_empty())
+    {
+        bail!("audit does not accept arguments; automatic fixes are not supported");
+    }
+    if (options.parallel || options.topological)
+        && !options.workspaces
+        && options.workspace.is_empty()
+    {
+        bail!("--parallel/--topological require --workspaces or --workspace");
+    }
+    for name in &options.trust {
+        if !crate::lockfile::valid_name(name) {
+            bail!("invalid trusted package name: {name}");
+        }
     }
     Ok(Some(options))
 }
@@ -268,8 +375,14 @@ mod tests {
             ("remove", "uninstall"),
             ("rm", "uninstall"),
             ("x", "exec"),
+            ("why", "explain"),
         ] {
-            assert_eq!(options(&[alias]).command, command);
+            let args = if alias == "why" {
+                vec![alias, "react"]
+            } else {
+                vec![alias]
+            };
+            assert_eq!(options(&args).command, command);
         }
         let o = options(&["init", "-y"]);
         assert_eq!(o.command, "init");
@@ -291,6 +404,43 @@ mod tests {
         assert_eq!(o.arguments, ["rm"]);
         assert!(o.json);
         assert!(options(&["cache"]).arguments.is_empty());
+    }
+
+    #[test]
+    fn authentication_and_publication_options_are_parsed_without_script_fallback() {
+        let o = options(&[
+            "login",
+            "--auth-type=legacy",
+            "--scope=@team",
+            "--otp",
+            "123456",
+        ]);
+        assert_eq!(o.command, "login");
+        assert_eq!(o.auth_type.as_deref(), Some("legacy"));
+        assert_eq!(o.scope.as_deref(), Some("@team"));
+        assert_eq!(o.otp.as_deref(), Some("123456"));
+        let o = options(&[
+            "publish",
+            "./package",
+            "--tag=beta",
+            "--access=public",
+            "--dry-run",
+        ]);
+        assert_eq!(o.command, "publish");
+        assert_eq!(o.arguments, ["./package"]);
+        assert!(o.dry_run);
+        for args in [
+            vec!["login", "extra"],
+            vec!["login", "--auth-type=unknown"],
+            vec!["login", "--scope=@@team"],
+            vec!["publish", "--access=unknown"],
+            vec!["pack", "one", "two"],
+        ] {
+            assert!(
+                parse(args.iter().map(|s| (*s).to_owned())).is_err(),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

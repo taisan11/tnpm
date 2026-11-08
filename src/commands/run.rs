@@ -38,7 +38,7 @@ pub fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
                 env::current_dir().context("could not determine current directory")?
             };
             let entry = cwd.join(event);
-            return crate::runner::run(&cwd, &entry, &args);
+            return crate::runner::run(&cwd, &entry, &args, options, config);
         }
         manifest.as_ref().context("package.json not found")?;
         if options.if_present {

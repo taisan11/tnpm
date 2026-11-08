@@ -51,7 +51,7 @@ fn run_separator_forwards_arguments_without_interpreting_flags() {
 fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
     let f = Fixture::new();
     f.single("app", r#", "scripts":{"postinstall":":"}"#);
-    f.file("package.json", r#"{"dependencies":{"app":"1"},"scripts":{"preinstall":":","install":":","postinstall":":"}}"#);
+    f.file("package.json", r#"{"dependencies":{"app":"1"},"trustedDependencies":["app"],"scripts":{"preinstall":":","install":":","postinstall":":"}}"#);
     let output = f.invoke_tty(&["install", "--json"], "xterm-256color");
     assert!(output.status.success());
     nojson::RawJson::parse(&String::from_utf8(output.stdout).unwrap()).unwrap();
@@ -63,7 +63,7 @@ fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
         "quiet hooks must reuse the progress row: {error:?}"
     );
     assert!(!error.contains("\n\n"), "{error:?}");
-    f.file("package.json", r#"{"dependencies":{"app":"1"},"scripts":{"preinstall":"echo complete-line-marker","install":":","postinstall":"printf partial-line-marker"}}"#);
+    f.file("package.json", r#"{"dependencies":{"app":"1"},"trustedDependencies":["app"],"scripts":{"preinstall":"echo complete-line-marker","install":":","postinstall":"printf partial-line-marker"}}"#);
     let output = f.invoke_tty(&["update", "--json"], "xterm-256color");
     assert!(output.status.success());
     nojson::RawJson::parse(&String::from_utf8(output.stdout).unwrap()).unwrap();
@@ -232,7 +232,7 @@ fn install_and_update_json_keep_lifecycle_output_on_stderr() {
     );
     f.file("package.json", r#"{"dependencies":{"app":"1"},"scripts":{"preinstall":"echo root-preinstall-marker","postinstall":"echo root-postinstall-marker","echo":"echo explicit-run-marker"}}"#);
     for command in ["install", "update"] {
-        let output = f.invoke(&[command, "--json"]);
+        let output = f.invoke(&[command, "--json", "--trust", "app"]);
         assert!(
             output.status.success(),
             "{}",

@@ -41,6 +41,9 @@ tnpm ls --depth=1 --json
 | `outdated [PACKAGE...]` | 直接依存の current / wanted / latest を表示。更新候補がある場合は終了コード 1。 |
 | `prune [PACKAGE...]` | 不要な依存を除去。`--all` は `node_modules` 全体を削除。 |
 | `ls [PACKAGE...]` | インストール済み依存を一覧表示。通常は直接依存のみ。 |
+| `explain QUERY...`、`why` | lockfile の依存経路と要求元を表示。名前・name@range・node_modules パス、`--json` に対応。 |
+| `rebuild [QUERY...]` | 既存依存の bin を再生成し、許可された依存の lifecycle / ネイティブビルドを再実行。通信・manifest / lockfile 更新なし。 |
+| `audit` | ロックされたレジストリ依存の脆弱性を検査。`--json`、`--omit`、`--audit-level` に対応。自動修正なし。 |
 | `fund` | インストール済み依存の funding URL を一覧表示。ブラウザは開かず、パッケージ引数も未対応。 |
 | `run [SCRIPT] [ARGS...]` | スクリプトと pre/post フックを実行。対象省略時はスクリプト一覧。 |
 | `exec [OPTIONS] [BINARY] [ARGS...]`、`x` | ローカル bin を優先し、必要ならパッケージを取得して実行。 |
@@ -49,6 +52,9 @@ tnpm ls --depth=1 --json
 | `version [RELEASE]` | バージョン一覧を表示、または SemVer / `major` / `minor` / `patch` / `premajor` / `preminor` / `prepatch` / `prerelease` / `from-git` に更新。 |
 | `view [PACKAGE] [FIELD...]` | レジストリのメタデータを表示。PACKAGE 省略または `.` はローカルの名前を使用。フィールドはドット・配列添字を指定可能。 |
 | `get [KEY...]` | npm 設定を表示。認証情報などの秘密は非表示。 |
+| `login` / `adduser` / `logout` / `whoami` | Web / legacy 認証、user npmrc への保存・削除、ユーザー名の表示。 |
+| `pack [DIRECTORY]` / `publish [DIRECTORY]` | ローカルパッケージの梱包・公開。`--dry-run` で内容確認。 |
+| `dist-tag <ls [PACKAGE]\|add PACKAGE@VERSION [TAG]\|rm PACKAGE TAG>` | 公開済みパッケージの配布タグを表示・追加・削除。 |
 | `cache [rm]` | tnpm キャッシュ容量を表示、または `rm` で全 tnpm キャッシュを削除。 |
 | `upgrade` | tnpm 自身を GitHub Release の最新安定版へ更新。引数なし。 |
 
@@ -66,6 +72,7 @@ tnpm ls --depth=1 --json
 | `--userconfig PATH` | 読み込む user npmrc を指定。 |
 | `--globalconfig PATH` | 読み込む global npmrc を指定。 |
 | `--no-cache` | `view` や install 系のレジストリ／パッケージキャッシュを読み書きせず、`exec` / `create` は再解決。install 系では `--offline` と併用不可。 |
+| `run --no-cache FILE` | 直接実行の URL ソースを再取得し、ランナー用の隔離パッケージを再解決。URL ソースの永続キャッシュは読み書きしない。 |
 
 設定の優先順位は既定値 < global npmrc < user npmrc < project npmrc < `npm_config_*` 環境変数 < CLI です。全オプションが npmrc 設定に対応するわけではありません。
 
@@ -82,17 +89,25 @@ tnpm ls --depth=1 --json
 | `--omit TYPES` | install / ci / update / prune で `dev`、`optional`、`peer` の配置を省略。カンマ区切りを指定可能（例 `--omit=dev,optional`）。lockfile から依存を削除する指定ではない。 |
 | `--production` | install 系で dev 依存の配置を省略。 |
 | `--ignore-scripts` | install 系ではライフサイクルフックを無効化。`run` では明示スクリプトを実行し pre/post のみ無効化。`version` でもフックを無効化。 |
+| `--trust PACKAGE` | install 系 / exec / create / rebuild で組み込み・ルート manifest の許可リストを実行中だけ拡張。複数回可。実際のパッケージ名を指定。永続保存なし。 |
 | `--legacy-peer-deps` | install 系で peer 依存の解決・検証を無効化。 |
 | `--no-legacy-peer-deps` | install 系で peer の自動解決・検証を有効化（既定）。不一致は警告。 |
 | `--strict-peer-deps` | peer 解決を有効化し、バージョン不一致をエラーにする。 |
 | `-f`, `--force` | install 系で strict 指定時も peer バージョン不一致を許可。必須 peer の欠落などは許可しない。 |
 | `--offline` | install 系でネットワーク取得にフォールバックしない。必要なキャッシュがなければエラー。`--no-cache` とは併用不可。 |
+| `run --offline FILE` | 直接実行の HTTP(S) / jsr: / npm: import を保存済みソース・依存だけで解決する。スクリプト自身の通信は制限しない。 |
 | `--if-present` | `run` で指定したスクリプトがない場合に成功する。 |
 | `-y`, `--yes` | 互換用フラグ。`init` は元から非対話で既定値を使用し、`exec` / `create` も確認プロンプトを出さない。 |
 | `-p`, `--package PACKAGE` | `exec` / `create` の実行用パッケージを指定。複数回指定可能。 |
 | `-c`, `--call COMMAND` | `exec` / `create` で実行するコマンド文字列を指定。 |
 
 ## コマンド固有オプション
+
+認証系は `--auth-type web|legacy` / `--scope SCOPE`、認証・公開・タグ操作は `--otp CODE` に対応します。`publish` は `--tag TAG` / `--access public|restricted`、`pack` / `publish` は `--dry-run`、`pack` は `--pack-destination PATH` に対応します。`--dry-run` はフックを止めないため、必要に応じて `--ignore-scripts` も指定してください。[認証と公開の詳細・制限](publishing.md)。
+
+`run --parallel` / `--concurrency N` / `--topological` は workspace 選択が必須で、スクリプト名より前に指定します。`--concurrency` は並列実行を有効にし、N は正整数です。`--topological` は選択内の workspace の通常・開発・optional 依存を依存先から実行します。詳細は [workspaces](dependency-sources.md#workspaces)。
+
+`audit --audit-level LEVEL` は info（既定）/ low / moderate / high / critical / none を指定します。閾値以上の advisory があれば終了コード 1。none でも通信・整合性エラーは失敗します。
 
 | オプション | 対象・動作 |
 | --- | --- |

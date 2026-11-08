@@ -11,7 +11,11 @@ use std::{
 };
 
 pub(super) fn is_source(spec: &str) -> bool {
-    spec.starts_with("file:") || spec.starts_with("workspace:") || is_git(spec)
+    spec.starts_with("file:") || spec.starts_with("workspace:") || is_git(spec) || is_tarball(spec)
+}
+
+pub(super) fn is_tarball(spec: &str) -> bool {
+    (spec.starts_with("http://") || spec.starts_with("https://")) && !is_git(spec)
 }
 
 pub(super) fn is_git(spec: &str) -> bool {
@@ -201,6 +205,25 @@ pub(super) async fn metadata(ctx: &Context<'_>, name: &str, spec: &str) -> Resul
             Some(digest(&bytes)),
         )
         .map(Some);
+    }
+    if is_tarball(spec) {
+        let mut entry = Value::object();
+        entry.set("resolved", Value::from(spec));
+        let bytes = store::tarball(ctx, &entry, name).await?;
+        let temp = tempfile::tempdir()?;
+        store::unpack(&bytes, temp.path())?;
+        let data = manifest::read(temp.path())?.context("remote archive has no package.json")?;
+        ensure!(
+            !lockfile::dependencies(&data, false)
+                .iter()
+                .any(|d| d.spec.starts_with("file:")),
+            "remote tarball dependencies with relative file dependencies are not supported"
+        );
+        let integrity = digest(&bytes);
+        entry.set("integrity", Value::from(integrity.as_str()));
+        entry.set("tnpmSpec", Value::from(spec));
+        store::remember_source_tarball(ctx, &entry, &bytes)?;
+        return source_data(data, spec, spec, Some(integrity)).map(Some);
     }
     if is_git(spec) {
         let spec_owned = spec.to_owned();

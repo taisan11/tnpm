@@ -40,7 +40,19 @@ pub fn run() -> Result<()> {
         } else {
             config::project_root(start)
         };
-    if !matches!(options.command.as_str(), "init" | "create" | "exec") {
+    if !matches!(
+        options.command.as_str(),
+        "init"
+            | "create"
+            | "exec"
+            | "pack"
+            | "publish"
+            | "login"
+            | "adduser"
+            | "logout"
+            | "whoami"
+            | "dist-tag"
+    ) {
         if let Some(workspace_root) = crate::workspaces::root(&root)? {
             if (options.command == "run"
                 || options.command == "uninstall"
@@ -64,10 +76,7 @@ pub fn run() -> Result<()> {
             anyhow::ensure!(!selected.is_empty(), "no workspaces found");
             if options.command == "run" {
                 let config = config::Config::load(&root, &options)?;
-                for workspace in selected {
-                    commands::run::run(&root.join(&workspace.relative), &options, &config)?;
-                }
-                return Ok(());
+                return commands::workspace_run::run(&root, &selected, &options, &config);
             }
             // Install is a single shared graph. Manifest mutation is scoped separately.
             anyhow::ensure!(
@@ -80,15 +89,38 @@ pub fn run() -> Result<()> {
         }
     }
     let config = config::Config::load(&root, &options)?;
+    if matches!(
+        options.command.as_str(),
+        "login" | "adduser" | "logout" | "whoami" | "pack" | "publish" | "dist-tag"
+    ) {
+        anyhow::ensure!(
+            !options.workspaces && options.workspace.is_empty(),
+            "authentication and publication commands do not support workspace selection; use --prefix PATH"
+        );
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                if matches!(
+                    options.command.as_str(),
+                    "login" | "adduser" | "logout" | "whoami"
+                ) {
+                    commands::auth::run(&options, &config).await
+                } else {
+                    commands::publish::run(&root, &options, &config).await
+                }
+            });
+    }
     match options.command.as_str() {
         "ls" => commands::packages::list(&root, &options),
         "fund" => commands::packages::fund(&root, &options),
+        "explain" => commands::explain::run(&root, &options),
         "version" => commands::version::run(&root, &options, &config),
         "get" => config.print(&options.arguments, options.json),
         "run" => commands::run::run(&root, &options, &config),
         "init" => commands::init::run(&root, &options),
         "view" | "install" | "uninstall" | "ci" | "exec" | "create" | "outdated" | "update"
-        | "prune" => tokio::runtime::Builder::new_current_thread()
+        | "prune" | "rebuild" | "audit" => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
             .block_on(async {

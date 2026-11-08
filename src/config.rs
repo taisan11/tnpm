@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod credentials;
 mod http;
 
 static PATH_KEYS: phf::Set<&'static str> = phf::phf_set! {
@@ -84,6 +85,7 @@ impl Config {
         let mut config = Self {
             values: BTreeMap::from([
                 ("registry".into(), "https://registry.npmjs.org/".into()),
+                ("@jsr:registry".into(), "https://npm.jsr.io/".into()),
                 ("tag".into(), "latest".into()),
                 ("prefix".into(), prefix),
                 ("cache".into(), format!("{home}/.npm")),
