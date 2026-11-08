@@ -173,6 +173,18 @@ pub fn lifecycle(root: &Path, manifest: &Value, event: &str) -> Result<()> {
     lifecycle_output(root, manifest, event, false)
 }
 
+pub fn lifecycle_with_bin(
+    root: &Path,
+    manifest: &Value,
+    event: &str,
+    extra: Option<&Path>,
+) -> Result<()> {
+    if let Some(text) = manifest.get("scripts").and_then(|s| s.str(event)) {
+        command_output(root, manifest, event, text, &[], extra, false)?;
+    }
+    Ok(())
+}
+
 pub fn implicit_native(root: &Path, manifest: &Value) -> bool {
     root.join("binding.gyp").is_file()
         && manifest.get("gypfile") != Some(&Value::Bool(false))
