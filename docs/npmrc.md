@@ -71,7 +71,7 @@ store-dir=~/.tnpm/cache
 
 ## JSR の npm エイリアス
 
-`jsr:@scope/package@RANGE` を直接使用できます。`tnpm add jsr:@luca/cases` は `jsr:` 指定を保存し、内部で公式の npm 互換パッケージを解決します。`@jsr:registry` の既定値は `https://npm.jsr.io/` なので設定追加は不要です。以下のエイリアス形式も引き続き使えます。[JSR と URL import](jsr-and-url-imports.md)。
+`jsr:@scope/package@RANGE` を直接使用できます。`tnpm add jsr:@luca/cases` は `jsr:` 指定を保存し、内部で公式の npm 互換パッケージを解決します。`@jsr:registry` の既定値は `https://npm.jsr.io/` なので設定追加は不要です。JSR は npm の `--registry` 指定とは独立してこのレジストリを使用します。以下のエイリアス形式も引き続き使えます。[JSR と URL import](jsr-and-url-imports.md)。
 
 たとえば `package.json` に次の依存がある場合:
 
