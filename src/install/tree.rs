@@ -51,7 +51,7 @@ fn retain_reachable(
     Ok(())
 }
 
-fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
+pub(super) fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
     let mut path = root.to_owned();
     for component in Path::new(relative).components() {
         path.push(component);
