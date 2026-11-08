@@ -109,6 +109,43 @@ fn jsr_has_a_builtin_registry_without_requiring_npmrc() {
     assert!(f.requests.lock().unwrap().is_empty());
 }
 
+#[test]
+fn jsr_registry_is_independent_of_the_npm_registry_override() {
+    let f = Fixture::new();
+    setup(&f);
+    // A deliberately unreachable npm registry must not intercept jsr: metadata.
+    let npm_registry = "http://127.0.0.1:1/";
+    f.ok(&[
+        "add",
+        "jsr:@demo/math@^1",
+        "--registry",
+        npm_registry,
+        "--ignore-scripts",
+    ]);
+    assert!(
+        f.root
+            .join("node_modules/@demo/math/package.json")
+            .is_file()
+    );
+    assert_eq!(
+        f.ok(&[
+            "view",
+            "jsr:@demo/math@1",
+            "version",
+            "--registry",
+            npm_registry,
+        ]),
+        "[\n  \"1.0.0\",\n  \"1.1.0\"\n]\n"
+    );
+    assert!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|path| path.contains("@jsr"))
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn jsr_exec_uses_the_same_compatibility_mapping() {

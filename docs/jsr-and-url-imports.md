@@ -21,7 +21,7 @@ tnpm view jsr:@luca/cases version
 
 この形式を manifest に直接書くこともできます。元の `jsr:` 指定を保持し、lockfile に npm 互換パッケージの実名・解決済みバージョン・tarball・integrity を保存します。通常・推移依存・peer、`ci`、`ls`、`outdated`、`update` / `update --latest` も共通の解決器を使います。追加時に版を省略した場合は latest を選び、既定では `^VERSION`、`-E` では exact を保存します。`update --latest` は `jsr:` と exact / `^` / `~` の形式を維持します。
 
-`@jsr:registry` の既定値は `https://npm.jsr.io/` なので npmrc の追記は不要です。ミラーを使う場合は `.npmrc` の `@jsr:registry`、全体を一時的に変更する場合は `--registry` で上書きできます。既存の `npm:@jsr/scope__name@RANGE` 形式も使えます。認証、TLS、キャッシュ、tarball integrity、スクリプト許可制は通常のレジストリ依存と同じです。
+`@jsr:registry` の既定値は `https://npm.jsr.io/` なので npmrc の追記は不要です。JSR の指定解析とレジストリ選択は `src/jsr.rs` に分離し、通常の npm 依存に使う `--registry` では JSR の取得先を変更しません。JSR のミラーを指定する場合は `.npmrc` の `@jsr:registry` を使用します。既存の `npm:@jsr/scope__name@RANGE` 形式も引き続き使えます。認証、TLS、キャッシュ、tarball integrity、スクリプト許可制は通常のレジストリ依存と同じです。
 
 インストール指定には export のサブパスを付けません。インストール後は `import ... from '@luca/cases'` や公開されたサブパスを使用します。
 

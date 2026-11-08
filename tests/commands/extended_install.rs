@@ -104,6 +104,46 @@ fn workspaces_link_packages_install_dev_dependencies_and_run_selected_scripts() 
 
 #[cfg(unix)]
 #[test]
+fn workspace_globs_match_character_classes_recursive_paths_and_exclusions() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"workspaces":["packages/**/item-[0-9]","packages/extra-?/unit?","!packages/skip/**"]}"#,
+    );
+    f.file(
+        "packages/a/nested/item-1/package.json",
+        r#"{"name":"included","version":"1.0.0"}"#,
+    );
+    f.file(
+        "packages/skip/deep/item-2/package.json",
+        r#"{"name":"excluded","version":"1.0.0"}"#,
+    );
+    f.file(
+        "packages/a/nested/item-x/package.json",
+        r#"{"name":"not-matched","version":"1.0.0"}"#,
+    );
+    f.file(
+        "packages/extra-x/unit4/package.json",
+        r#"{"name":"extra","version":"1.0.0"}"#,
+    );
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(f.root.join("node_modules/included/package.json").is_file());
+    assert!(f.root.join("node_modules/extra/package.json").is_file());
+    assert!(!f.root.join("node_modules/excluded").exists());
+    assert!(!f.root.join("node_modules/not-matched").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn invalid_workspace_glob_is_rejected_before_fetching_dependencies() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"workspaces":["packages/[a-"]}"#);
+    assert!(!f.invoke(&["install"]).status.success());
+    assert!(f.requests.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
 fn workspace_add_and_remove_edit_only_the_selected_manifest() {
     let f = Fixture::new();
     f.single("tool", "");

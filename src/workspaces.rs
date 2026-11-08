@@ -1,6 +1,7 @@
 //! Workspace discovery without following directory symlinks or entering node_modules.
 use crate::{json::Value, lockfile, manifest, semver};
 use anyhow::{Context, Result, bail};
+use glob::{MatchOptions, Pattern};
 use std::{
     collections::BTreeSet,
     fs,
@@ -14,43 +15,30 @@ pub struct Workspace {
     pub manifest: Value,
 }
 
-fn pattern_matches(pattern: &[&str], path: &[&str]) -> bool {
-    match (pattern.split_first(), path.split_first()) {
-        (None, None) => true,
-        (Some((&"**", rest)), _) => {
-            pattern_matches(rest, path)
-                || (!path.is_empty() && pattern_matches(pattern, &path[1..]))
-        }
-        (Some((part, rest)), Some((name, tail))) => {
-            wildcard(part, name) && pattern_matches(rest, tail)
-        }
-        _ => false,
-    }
+struct WorkspacePattern {
+    include: bool,
+    matcher: Pattern,
+    // Avoid walking unrelated subtrees for simple literal prefixes.
+    literal_prefix: String,
 }
 
-fn wildcard(pattern: &str, name: &str) -> bool {
-    let (p, n) = (pattern.as_bytes(), name.as_bytes());
-    let (mut i, mut j, mut star, mut retry) = (0, 0, None, 0);
-    while j < n.len() {
-        if i < p.len() && (p[i] == b'?' || p[i] == n[j]) {
-            i += 1;
-            j += 1;
-        } else if i < p.len() && p[i] == b'*' {
-            star = Some(i);
-            i += 1;
-            retry = j;
-        } else if let Some(s) = star {
-            retry += 1;
-            j = retry;
-            i = s + 1;
-        } else {
-            return false;
-        }
-    }
-    while i < p.len() && p[i] == b'*' {
-        i += 1;
-    }
-    i == p.len()
+fn matches(pattern: &WorkspacePattern, path: &str) -> bool {
+    pattern.matcher.matches_path_with(
+        Path::new(path),
+        MatchOptions {
+            case_sensitive: true,
+            require_literal_separator: true,
+            require_literal_leading_dot: true,
+        },
+    )
+}
+
+fn may_contain_match(pattern: &WorkspacePattern, dir: &str) -> bool {
+    let prefix = &pattern.literal_prefix;
+    prefix.is_empty()
+        || dir == prefix
+        || dir.starts_with(&format!("{prefix}/"))
+        || prefix.starts_with(&format!("{dir}/"))
 }
 
 pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
@@ -64,22 +52,33 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
     let patterns = patterns
         .iter()
         .map(|p| {
-            let p = p.string().context("workspace pattern must be a string")?;
-            let p = p.strip_prefix("./").unwrap_or(p).trim_end_matches('/');
-            if p.is_empty()
-                || p.starts_with('/')
-                || p.contains(['\\', ':', '{', '}', '[', ']'])
-                || p.split('/').any(|s| s == ".." || s.is_empty())
+            let raw = p.string().context("workspace pattern must be a string")?;
+            let (include, raw) = raw.strip_prefix('!').map_or((true, raw), |p| (false, p));
+            let raw = raw.strip_prefix("./").unwrap_or(raw).trim_end_matches('/');
+            if raw.is_empty()
+                || raw.starts_with('/')
+                || raw.contains(['\\', ':', '{', '}', '\0'])
+                || raw.split('/').any(|s| s == ".." || s.is_empty())
             {
-                bail!("unsafe or unsupported workspace pattern: {p}");
+                bail!("unsafe or unsupported workspace pattern: {raw}");
             }
-            Ok(p)
+            let literal_prefix = raw
+                .split('/')
+                .take_while(|part| !part.contains(['*', '?', '[', ']']))
+                .collect::<Vec<_>>()
+                .join("/");
+            Ok(WorkspacePattern {
+                include,
+                matcher: Pattern::new(raw)
+                    .with_context(|| format!("invalid workspace glob: {raw}"))?,
+                literal_prefix,
+            })
         })
         .collect::<Result<Vec<_>>>()?;
     fn walk(
         root: &Path,
         relative: &str,
-        patterns: &[&str],
+        patterns: &[WorkspacePattern],
         out: &mut Vec<String>,
         depth: usize,
     ) -> Result<()> {
@@ -98,25 +97,17 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
             } else {
                 format!("{relative}/{name}")
             };
-            let parts = path.split('/').collect::<Vec<_>>();
             if entry.path().join("package.json").is_file()
-                && patterns.iter().any(|p| {
-                    !p.starts_with('!')
-                        && pattern_matches(&p.split('/').collect::<Vec<_>>(), &parts)
-                })
-                && !patterns
-                    .iter()
-                    .filter_map(|p| p.strip_prefix('!'))
-                    .any(|p| pattern_matches(&p.split('/').collect::<Vec<_>>(), &parts))
+                && patterns.iter().any(|p| p.include && matches(p, &path))
+                && !patterns.iter().any(|p| !p.include && matches(p, &path))
             {
                 out.push(path.clone());
             }
-            // Only explore prefixes that can match a positive pattern.
-            if patterns.iter().filter(|p| !p.starts_with('!')).any(|p| {
-                let p = p.split('/').collect::<Vec<_>>();
-                p.contains(&"**")
-                    || (parts.len() < p.len() && parts.iter().zip(&p).all(|(n, p)| wildcard(p, n)))
-            }) {
+            // Traverse using literal prefixes, but let glob handle actual matching.
+            if patterns
+                .iter()
+                .any(|p| p.include && may_contain_match(p, &path))
+            {
                 walk(root, &path, patterns, out, depth + 1)?;
             }
         }
