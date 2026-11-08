@@ -17,6 +17,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 mod audit;
 mod bundles;
 mod context;
+mod isolated;
 mod overrides;
 mod platform;
 mod report;
