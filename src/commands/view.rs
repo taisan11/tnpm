@@ -62,7 +62,11 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
     } else {
         package_spec(spec)?
     };
-    let url = config.registry_url(name, options.registry.as_deref())?;
+    let url = if name.starts_with("@jsr/") {
+        crate::jsr::registry_url(config, name)?
+    } else {
+        config.registry_url(name, options.registry.as_deref())?
+    };
     let authorization = config.authorization(&url)?;
     let no_cache = options.no_cache || config.authenticated(&url);
     let fields = options.arguments.get(1..).unwrap_or_default();
