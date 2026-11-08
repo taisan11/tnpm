@@ -44,7 +44,7 @@ store-dir=~/.tnpm/cache
 
 - `node-linker=hoisted`（既定）: 従来どおり依存を巻き上げて配置。
 - `node-linker=isolated`: `node_modules/.tnpm/` の仮想ストアに各実体を置き、宣言された依存だけをディレクトリリンクで公開。`tnpm ci` と通常の `install` に適用。
-- `store-dir`: 全プロジェクトで共有する**展開済みパッケージストア**の親ディレクトリ。既定は `~/.tnpm/cache`、展開済みの内容はその下の `packages-v2/` に保存。絶対パスのみ受け付けます。レジストリの HTTP メタデータキャッシュは従来どおり別管理。
+- `store-dir`: 全プロジェクトで共有するパッケージストアの親ディレクトリ。既定は `~/.tnpm/cache`。取得用の `packages-v2/` と、分離インストール時にファイル単位のハードリンクを作成する `files-v1/` がその下に作られます。絶対パスのみ受け付けます。ハードリンクを使うにはプロジェクトと同じディスク／ボリュームに置いてください。
 - `npm_config_node_linker` / `npm_config_store_dir` 環境変数でも変更できます。CLI の `--node-linker` / `--store-dir` が最優先です。
 
 詳しい配置方式と現在の制限は [インストールと lockfile](install-and-lockfile.md) を参照してください。
