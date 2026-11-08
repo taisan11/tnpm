@@ -195,6 +195,10 @@ pub(super) fn convert(
         }
         super::tree::remove_path(&source.join("node_modules"))?;
         let destination = package_path(root, path);
+        super::tree::ensure_safe_parents(
+            root,
+            &destination.strip_prefix(root)?.to_string_lossy(),
+        )?;
         fs::create_dir_all(
             destination
                 .parent()
