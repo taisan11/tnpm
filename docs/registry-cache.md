@@ -20,6 +20,6 @@ tnpm 独自のメタデータキャッシュと HTTP キャッシュポリシー
 
 ## グローバル展開済みパッケージストア
 
-`store-dir`（既定は `~/.tnpm/cache`）の下の `packages-v2/` に、integrity 付きで検証されたレジストリパッケージを保存します。各プロジェクトの通常配置はここから CoW clone または通常コピーし、`node-linker=isolated` ではプロジェクト内 `node_modules/.tnpm/` にクローンしてリンクします。共有のストア実体はインストールスクリプトから書き換えられません。
+`store-dir`（既定は `~/.tnpm/cache`）の下の `packages-v2/` に、integrity 付きで検証されたレジストリパッケージを保存します。従来の `hoisted` 配置は CoW clone または通常コピーです。`node-linker=isolated` では、スクリプト実行後のファイルを SHA-256 で識別して `files-v1/` に保存し、`node_modules/.tnpm/` へ **ファイル単位のハードリンク**で配置します。別ディスクではハードリンクに失敗し、コピーへのフォールバックはありません。パッケージ間のディレクトリリンクは Windows では Junction、それ以外は symlink です。
 
-任意の共有パスに変更するときはユーザー `.npmrc` に `store-dir=/absolute/path` を設定します。変更前の内容は自動移動しません。設定先が `~/.tnpm/cache` 以外の場合、`tnpm cache rm` はその追加ディレクトリを削除しません。`--no-cache`・認証付き・integrity 不明の取得では展開済みストアを使用しません。
+任意の共有パスに変更するときはユーザー `.npmrc` に `store-dir=/absolute/path` を設定します。変更前の内容は自動移動しません。設定先が `~/.tnpm/cache` 以外の場合、`tnpm cache rm` はその追加ディレクトリを削除しません。`--no-cache`・認証付き・integrity 不明の取得ではレジストリの展開済みキャッシュを使用しません。分離モードのファイルストアはこれと別です。ハードリンク先のファイルを後から変更すると同じ inode を共有するプロジェクトにも反映されるため、専用の依存ディレクトリを手動編集しないでください。
