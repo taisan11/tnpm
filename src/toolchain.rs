@@ -2,14 +2,15 @@
 //! A temporary PATH shim leaves package.json and shell expressions untouched.
 
 use crate::{config::Config, json::Value, scripts};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::{
     env, fs,
     ffi::OsString,
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
 };
 
+#[cfg(tnpm_bundled_tsrs)]
 const TSRS_VERSION: &str = "0.23.0-ts7.1.0-beta";
 
 #[cfg(tnpm_bundled_tsrs)]
@@ -32,7 +33,7 @@ pub fn shim(root: &Path, config: &Config) -> Result<Option<tempfile::TempDir>> {
     {
         let binary = binary.to_string_lossy();
         if binary.contains('"') {
-            bail!("tnpm executable path contains a quote");
+            anyhow::bail!("tnpm executable path contains a quote");
         }
         fs::write(
             dir.path().join("tsc.cmd"),
@@ -115,7 +116,7 @@ pub fn dispatch(shim_dir: &Path, args: Vec<OsString>) -> Result<()> {
 }
 
 #[cfg(tnpm_bundled_tsrs)]
-fn bundled_binary() -> Result<Option<PathBuf>> {
+fn bundled_binary() -> Result<Option<std::path::PathBuf>> {
     use flate2::read::GzDecoder;
     use tar::Archive;
 
@@ -139,7 +140,7 @@ fn bundled_binary() -> Result<Option<PathBuf>> {
         .unpack(&staging)
         .context("could not unpack embedded tsrs")?;
     if !staging.join(name).is_file() || !staging.join("lib.d.ts").is_file() {
-        bail!("embedded tsrs package is missing the executable or TypeScript libraries");
+        anyhow::bail!("embedded tsrs package is missing the executable or TypeScript libraries");
     }
 
     if let Err(error) = fs::rename(&staging, &location) {
