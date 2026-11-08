@@ -203,6 +203,17 @@ pub(super) fn convert(
         fs::rename(&source, &destination)
             .with_context(|| format!("could not move {path} into isolated store"))?;
     }
+    // Workspace dependencies may have been installed inside the symlink target.
+    // Their payloads have already been relocated above; replace the old hoisted
+    // directories before adding isolated dependency links.
+    for path in selected {
+        let entry = &lock.packages[path];
+        if flag(entry, "link") {
+            let target = super::sources::workspace_target(ctx, entry)?;
+            super::tree::ensure_safe_parents(&target, "node_modules")?;
+            super::tree::remove_path(&target.join("node_modules"))?;
+        }
+    }
     // Every package has its own node_modules: unrelated hoisted dependencies
     // cannot leak into its resolution graph.
     for path in selected {
