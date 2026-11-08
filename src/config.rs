@@ -132,7 +132,10 @@ impl Config {
             Some("hoisted" | "isolated") => {}
             _ => bail!("node-linker must be hoisted or isolated"),
         }
-        if !config.get("store-dir").is_some_and(|value| Path::new(value).is_absolute()) {
+        if !config
+            .get("store-dir")
+            .is_some_and(|value| Path::new(value).is_absolute())
+        {
             bail!("store-dir must be an absolute path");
         }
         if let Some(registry) = &options.registry {
