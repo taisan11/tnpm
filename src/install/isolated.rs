@@ -1,12 +1,20 @@
 //! pnpm-style isolated linker. Package payloads live in a project-local virtual
 //! store; only declared dependencies are exposed by directory links.
 use super::{context::Context, flag, store};
-use crate::{json::Value, lockfile::{self, Lockfile}, manifest, scripts};
+use crate::{
+    json::Value,
+    lockfile::{self, Lockfile},
+    manifest, scripts,
+};
 use anyhow::{Context as _, Result, bail};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::{Path, PathBuf}};
 #[cfg(unix)]
 use std::path::Component;
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 const MARKER: &str = "node_modules/.tnpm-layout";
 
@@ -48,19 +56,27 @@ fn relative(from: &Path, target: &Path) -> PathBuf {
 fn directory_link(target: &Path, destination: &Path) -> Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(destination) {
         if metadata.file_type().is_symlink()
-            && let (Ok(actual), Ok(expected)) = (fs::canonicalize(destination), fs::canonicalize(target))
+            && let (Ok(actual), Ok(expected)) =
+                (fs::canonicalize(destination), fs::canonicalize(target))
             && actual == expected
         {
             return Ok(());
         }
-        bail!("refusing to replace existing dependency path: {}", destination.display());
+        bail!(
+            "refusing to replace existing dependency path: {}",
+            destination.display()
+        );
     }
     fs::create_dir_all(destination.parent().context("link has no parent")?)?;
     #[cfg(unix)]
     std::os::unix::fs::symlink(relative(destination.parent().unwrap(), target), destination)?;
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(target, destination)
-        .with_context(|| format!("could not link {}; enable Windows Developer Mode to allow directory symlinks", destination.display()))?;
+    std::os::windows::fs::symlink_dir(target, destination).with_context(|| {
+        format!(
+            "could not link {}; enable Windows Developer Mode to allow directory symlinks",
+            destination.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -69,7 +85,9 @@ fn binaries(modules: &Path, dependencies: &[(String, PathBuf)]) -> Result<()> {
     super::tree::remove_path(&bin)?;
     fs::create_dir_all(&bin)?;
     for (package_name, package) in dependencies {
-        let Some(data) = manifest::read(package)? else { continue };
+        let Some(data) = manifest::read(package)? else {
+            continue;
+        };
         for (name, entry) in scripts::bins(&data) {
             if name.is_empty()
                 || name.contains(['/', '\\'])
@@ -102,7 +120,10 @@ fn binaries(modules: &Path, dependencies: &[(String, PathBuf)]) -> Result<()> {
             {
                 let destination = bin.join(format!("{name}.cmd"));
                 if !destination.exists() {
-                    fs::write(destination, format!("@echo off\r\nnode \"{}\" %*\r\n", source.display()))?;
+                    fs::write(
+                        destination,
+                        format!("@echo off\r\nnode \"{}\" %*\r\n", source.display()),
+                    )?;
                 }
             }
         }
@@ -122,7 +143,9 @@ fn link_dependencies(
     fs::create_dir_all(modules)?;
     let mut links = Vec::new();
     for dep in lockfile::dependencies(data, from.is_empty()) {
-        let Some(location) = lock.resolve_dependency(from, &dep) else { continue };
+        let Some(location) = lock.resolve_dependency(from, &dep) else {
+            continue;
+        };
         if !selected.contains(&location) {
             continue;
         }
@@ -148,19 +171,31 @@ pub(super) fn convert(
     // Mark before relocating anything: a failed conversion is discarded on the
     // next install rather than treating half-moved packages as hoisted.
     fs::write(root.join(MARKER), "isolated\n")?;
-    let mut order: Vec<_> = selected.iter().filter(|path| !flag(&lock.packages[*path], "link")).collect();
+    let mut order: Vec<_> = selected
+        .iter()
+        .filter(|path| !flag(&lock.packages[*path], "link"))
+        .collect();
     // Move descendants before parents, avoiding relocation of nested node_modules.
-    order.sort_by_key(|path| std::cmp::Reverse((path.matches("/node_modules/").count(), path.len())));
+    order.sort_by_key(|path| {
+        std::cmp::Reverse((path.matches("/node_modules/").count(), path.len()))
+    });
     for path in order {
         let source = root.join(path);
         let metadata = fs::symlink_metadata(&source)
             .with_context(|| format!("installed package missing: {}", source.display()))?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            bail!("refusing to relocate non-directory package: {}", source.display());
+            bail!(
+                "refusing to relocate non-directory package: {}",
+                source.display()
+            );
         }
         super::tree::remove_path(&source.join("node_modules"))?;
         let destination = package_path(root, path);
-        fs::create_dir_all(destination.parent().context("virtual package has no parent")?)?;
+        fs::create_dir_all(
+            destination
+                .parent()
+                .context("virtual package has no parent")?,
+        )?;
         fs::rename(&source, &destination)
             .with_context(|| format!("could not move {path} into isolated store"))?;
     }
@@ -173,9 +208,25 @@ pub(super) fn convert(
         } else {
             package_path(root, path)
         };
-        link_dependencies(ctx, root, path, entry, lock, selected, &target.join("node_modules"))?;
+        link_dependencies(
+            ctx,
+            root,
+            path,
+            entry,
+            lock,
+            selected,
+            &target.join("node_modules"),
+        )?;
     }
     // Only direct project dependencies are visible from the project root.
-    link_dependencies(ctx, root, "", manifest, lock, selected, &root.join("node_modules"))?;
+    link_dependencies(
+        ctx,
+        root,
+        "",
+        manifest,
+        lock,
+        selected,
+        &root.join("node_modules"),
+    )?;
     Ok(())
 }
