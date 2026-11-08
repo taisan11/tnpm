@@ -46,7 +46,10 @@ fn auto_mode_only_replaces_typescript_71() {
     f.file(".npmrc", "toolchain-tsrs=auto\n");
     // No installed TypeScript means no substitution.
     assert_eq!(f.ok(&["run", "check"]), "tsc:--noEmit\n");
-    f.file("node_modules/typescript/package.json", r#"{"version":"7.1.0-beta"}"#);
+    f.file(
+        "node_modules/typescript/package.json",
+        r#"{"version":"7.1.0-beta"}"#,
+    );
     let out = f.invoke(&["run", "check"]);
     assert_eq!(out.status.code(), Some(23));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "tsrs:--noEmit\n");
@@ -56,7 +59,10 @@ fn auto_mode_only_replaces_typescript_71() {
 fn off_mode_does_not_replace_tsc() {
     let f = Fixture::new();
     install_fake_compilers(&f);
-    f.file("node_modules/typescript/package.json", r#"{"version":"7.1.0-beta"}"#);
+    f.file(
+        "node_modules/typescript/package.json",
+        r#"{"version":"7.1.0-beta"}"#,
+    );
     f.file(".npmrc", "toolchain-tsrs=off\n");
     assert_eq!(f.ok(&["run", "check"]), "tsc:--noEmit\n");
 }
