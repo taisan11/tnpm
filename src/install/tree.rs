@@ -51,12 +51,25 @@ fn retain_reachable(
     Ok(())
 }
 
-fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
+pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return metadata.file_attributes() & 0x400 != 0;
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+pub(super) fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
     let mut path = root.to_owned();
     for component in Path::new(relative).components() {
         path.push(component);
         if let Ok(meta) = fs::symlink_metadata(&path)
-            && meta.file_type().is_symlink()
+            && is_link(&meta)
         {
             bail!(
                 "refusing to modify symlinked installation path: {}",
@@ -82,7 +95,7 @@ fn ensure_install_path(
         }
         logical.push_str(&component.as_os_str().to_string_lossy());
         if let Ok(meta) = fs::symlink_metadata(&current)
-            && meta.file_type().is_symlink()
+            && is_link(&meta)
         {
             let entry = lock
                 .packages
@@ -107,9 +120,21 @@ fn ensure_install_path(
     Ok(())
 }
 
-fn remove_path(path: &Path) -> Result<()> {
+pub(super) fn remove_path(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => fs::remove_dir_all(path)?,
+        Ok(meta) if is_link(&meta) => {
+            #[cfg(windows)]
+            if meta.is_dir() {
+                // Junctions are directories with a reparse point. Remove the
+                // link itself without traversing the target.
+                fs::remove_dir(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+            #[cfg(not(windows))]
+            fs::remove_file(path)?;
+        }
+        Ok(meta) if meta.is_dir() => fs::remove_dir_all(path)?,
         Ok(_) => fs::remove_file(path)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
@@ -165,6 +190,20 @@ fn scan(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
 
 pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     ensure_safe_parents(root, "node_modules")?;
+    if super::isolated::active(root) {
+        let mut lock = Lockfile::read(root)?.unwrap_or_default();
+        lock.packages.retain(|path, entry| {
+            !path.is_empty()
+                && if flag(entry, "link") {
+                    root.join(path).join("package.json").is_file()
+                } else {
+                    super::isolated::package_path(root, path)
+                        .join("package.json")
+                        .is_file()
+                }
+        });
+        return Ok(lock);
+    }
     scan(ctx, root)
 }
 
@@ -340,6 +379,13 @@ pub(super) async fn materialize(
     clean: bool,
 ) -> Result<()> {
     ctx.warn_peers(lock);
+    let was_isolated = super::isolated::active(root);
+    if was_isolated {
+        // An isolated graph cannot be scanned or mutated as a hoisted tree.
+        ensure_safe_parents(root, "node_modules")?;
+        remove_path(&root.join("node_modules"))?;
+    }
+    let clean = clean || was_isolated;
     ensure_safe_parents(root, "node_modules")?;
     // Validate all paths before mutating the tree.
     for path in lock.packages.keys().filter(|p| !p.is_empty()) {
@@ -641,6 +687,10 @@ pub(super) async fn materialize(
                 ctx.lifecycle(root, manifest, event)?;
             }
         }
+        if ctx.config.get("node-linker") == Some("isolated") {
+            ctx.progress.event("place", "linking isolated dependencies");
+            super::isolated::convert(ctx, root, manifest, lock, &selected)?;
+        }
         let mut hidden = lock.clone();
         hidden.packages.retain(|path, _| selected.contains(path));
         builds.retain(|path, _| {
@@ -663,6 +713,11 @@ pub(super) async fn materialize(
 }
 
 pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
+    if super::isolated::active(root) {
+        bail!(
+            "rebuild on isolated installs is not supported yet; run tnpm install to rebuild the layout"
+        );
+    }
     anyhow::ensure!(
         ctx.options.passthrough.is_empty(),
         "unexpected arguments after --"
@@ -760,6 +815,11 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
     if ctx.options.lock_only {
         bail!("prune --package-lock-only is not supported");
     }
+    if !ctx.options.all && super::isolated::active(root) {
+        bail!(
+            "prune on isolated installs is not supported yet; run tnpm install to refresh dependencies"
+        );
+    }
     if ctx.options.all {
         if !ctx.options.arguments.is_empty() || ctx.options.omit.is_some() || ctx.options.production
         {
@@ -769,7 +829,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
         let count = if fs::symlink_metadata(&modules)
             .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         {
-            scan(ctx, root)?.packages.len()
+            snapshot(ctx, root)?.packages.len()
         } else {
             0
         };

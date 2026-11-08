@@ -7,7 +7,8 @@ Rust 製の軽量な npm 互換パッケージマネージャー。**npm との�
 - `package.json` の依存関係を解決し、`node_modules` と `tnpm-lock.json` を生成
 - `npm:` エイリアス、`jsr:` パッケージ、`peerDependencies` に対応（npm の `package-lock.json` は読み書きしません）
 - workspaces、`file:` / Git 依存、`overrides`、ユーザー領域へのグローバルインストールに対応
-- 並列ダウンロード、メタデータキャッシュ、展開済みパッケージの再利用でインストールを高速化
+- 並列ダウンロード、メタデータキャッシュ、共有パッケージストアでインストールを高速化
+- `hoisted`（既定）と `isolated`（ファイルのハードリンク＋依存ディレクトリリンク）を切り替え可能。Windows は権限昇格不要の Junction を使用。`~/.npmrc` で全プロジェクト共通設定にも対応
 - `run`、`exec`、`outdated`、`update`、`view`、`cache` などの CLI コマンドを提供
 - `login` / `logout` / `whoami` と `pack` / `publish` / `dist-tag` に対応（[認証と公開](docs/publishing.md)）
 - 依存スクリプトの信頼リスト、`rebuild`、`why` / `explain`、`audit`、workspace の並列・依存順実行に対応
@@ -50,6 +51,8 @@ tnpm outdated                # 更新可能な直接依存を表示
 tnpm update                  # 宣言されたバージョン範囲内で更新
 tnpm upgrade                 # tnpm 本体を最新安定版に更新
 ```
+
+分離配置を試す場合は `tnpm install --node-linker=isolated` を使用します。永続化する場合は `~/.npmrc` に `node-linker=isolated` を記述してください。共有ストアの保存先は `store-dir=~/.tnpm/cache`（既定値）で変更できます。制限事項は [配置方式と共有ストア](docs/install-and-lockfile.md) を参照してください。
 
 詳しいコマンド、エイリアス、オプションは [コマンドリファレンス](docs/commands.md)・[全オプション](docs/cli.md) または `tnpm --help` を参照してください。
 

@@ -10,7 +10,7 @@ mod credentials;
 mod http;
 
 static PATH_KEYS: phf::Set<&'static str> = phf::phf_set! {
-    "cache", "prefix", "userconfig", "globalconfig", "cafile", "certfile", "keyfile",
+    "cache", "prefix", "userconfig", "globalconfig", "store-dir", "cafile", "certfile", "keyfile",
 };
 
 static PROTECTED_FIELDS: phf::Set<&'static str> = phf::phf_set! {
@@ -89,6 +89,8 @@ impl Config {
                 ("tag".into(), "latest".into()),
                 ("prefix".into(), prefix),
                 ("cache".into(), format!("{home}/.npm")),
+                ("store-dir".into(), format!("{home}/.tnpm/cache")),
+                ("node-linker".into(), "hoisted".into()),
                 ("userconfig".into(), userconfig.clone()),
                 ("globalconfig".into(), globalconfig.clone()),
                 ("git-tag-version".into(), "true".into()),
@@ -119,6 +121,22 @@ impl Config {
         }
         if let Some(path) = &options.globalconfig {
             config.set("globalconfig".into(), expand_path(path, &home));
+        }
+        if let Some(linker) = &options.node_linker {
+            config.set("node-linker".into(), linker.clone());
+        }
+        if let Some(store_dir) = &options.store_dir {
+            config.set("store-dir".into(), store_dir.display().to_string());
+        }
+        match config.get("node-linker") {
+            Some("hoisted" | "isolated") => {}
+            _ => bail!("node-linker must be hoisted or isolated"),
+        }
+        if !config
+            .get("store-dir")
+            .is_some_and(|value| Path::new(value).is_absolute())
+        {
+            bail!("store-dir must be an absolute path");
         }
         if let Some(registry) = &options.registry {
             config.set("registry".into(), registry.clone());
