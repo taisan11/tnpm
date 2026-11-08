@@ -139,7 +139,10 @@ impl Config {
         {
             bail!("store-dir must be an absolute path");
         }
-        if !matches!(config.get("toolchain-tsrs"), Some("auto" | "on" | "off" | "true" | "false")) {
+        if !matches!(
+            config.get("toolchain-tsrs"),
+            Some("auto" | "on" | "off" | "true" | "false")
+        ) {
             bail!("toolchain-tsrs must be auto, on, or off");
         }
         if let Some(registry) = &options.registry {
