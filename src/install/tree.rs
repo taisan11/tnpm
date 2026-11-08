@@ -167,8 +167,13 @@ pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     ensure_safe_parents(root, "node_modules")?;
     if super::isolated::active(root) {
         let mut lock = Lockfile::read(root)?.unwrap_or_default();
-        lock.packages.retain(|path, _| {
-            !path.is_empty() && super::isolated::package_path(root, path).join("package.json").is_file()
+        lock.packages.retain(|path, entry| {
+            !path.is_empty()
+                && if flag(entry, "link") {
+                    root.join(path).join("package.json").is_file()
+                } else {
+                    super::isolated::package_path(root, path).join("package.json").is_file()
+                }
         });
         return Ok(lock);
     }
