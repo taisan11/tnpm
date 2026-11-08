@@ -57,6 +57,8 @@ jobs:
               sys.exit('Run on a v<version> tag matching Cargo.toml')
       - name: Test updater
         run: cargo test --locked --bin tnpm commands::upgrade::tests
+      - name: Bundle tsrs into release binary
+        run: python .github/scripts/bundle_tsrs.py
       - name: Build
         run: cargo build --locked --release --target ${{ matrix.target }}
       - name: Prepare binary
