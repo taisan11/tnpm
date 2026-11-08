@@ -20,7 +20,7 @@ tnpm は npm 形式のフラットな INI 設定を読み、実装が使用す�
 | キー | 既定値 | 利用箇所・補足 |
 | --- | --- | --- |
 | `registry` | `https://registry.npmjs.org/` | npm レジストリの URL |
-| `@jsr:registry` | `https://npm.jsr.io/` | JSR の npm 互換レジストリ |
+| `@jsr:registry` | `https://npm.jsr.io/` | JSR 専用の npm 互換配布レジストリ。通常の `--registry` に影響されない |
 | `@scope:registry` | 未設定 | スコープごとのレジストリ。`--registry` を明示した場合は CLI が優先 |
 | `node-linker` | `hoisted` | `hoisted` または `isolated`。CLI: `--node-linker` |
 | `store-dir` | `~/.tnpm/cache` | 共通ストアの親ディレクトリ。**展開後に絶対パス必須**。CLI: `--store-dir` |
