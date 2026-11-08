@@ -17,3 +17,9 @@ tnpm 独自のメタデータキャッシュと HTTP キャッシュポリシー
 - OS ユーザー専用の private cache として扱います。`private` は許可し、共有キャッシュ向けの `s-maxage` / `proxy-revalidate` は適用しません。
 - 保存は同一ディレクトリ内の一時ファイルから置換。Unix では新規ディレクトリは `0700`、ファイルは `0600` です。
 - npm の `cache` 設定とは別の、tnpm 専用キャッシュです。
+
+## グローバル展開済みパッケージストア
+
+`store-dir`（既定は `~/.tnpm/cache`）の下の `packages-v2/` に、integrity 付きで検証されたレジストリパッケージを保存します。各プロジェクトの通常配置はここから CoW clone または通常コピーし、`node-linker=isolated` ではプロジェクト内 `node_modules/.tnpm/` にクローンしてリンクします。共有のストア実体はインストールスクリプトから書き換えられません。
+
+任意の共有パスに変更するときはユーザー `.npmrc` に `store-dir=/absolute/path` を設定します。変更前の内容は自動移動しません。設定先が `~/.tnpm/cache` 以外の場合、`tnpm cache rm` はその追加ディレクトリを削除しません。`--no-cache`・認証付き・integrity 不明の取得では展開済みストアを使用しません。
