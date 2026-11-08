@@ -69,7 +69,8 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
                 .join("/");
             Ok(WorkspacePattern {
                 include,
-                matcher: Pattern::new(raw).with_context(|| format!("invalid workspace glob: {raw}"))?,
+                matcher: Pattern::new(raw)
+                    .with_context(|| format!("invalid workspace glob: {raw}"))?,
                 literal_prefix,
             })
         })
@@ -103,7 +104,10 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
                 out.push(path.clone());
             }
             // Traverse using literal prefixes, but let glob handle actual matching.
-            if patterns.iter().any(|p| p.include && may_contain_match(p, &path)) {
+            if patterns
+                .iter()
+                .any(|p| p.include && may_contain_match(p, &path))
+            {
                 walk(root, &path, patterns, out, depth + 1)?;
             }
         }
