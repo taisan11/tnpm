@@ -2,6 +2,7 @@
 use crate::{config::Config, json::Value, scripts};
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use glob::{MatchOptions, Pattern};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use sha2::{Digest, Sha512};
 use std::{
@@ -22,6 +23,31 @@ pub(super) struct Packed {
     pub integrity: String,
     pub shasum: String,
     pub files: Vec<File>,
+}
+
+struct AllowPattern {
+    include: bool,
+    matcher: Pattern,
+}
+
+fn allowlisted(path: &str, patterns: &[AllowPattern]) -> bool {
+    let options = MatchOptions {
+        case_sensitive: true,
+        require_literal_separator: true,
+        require_literal_leading_dot: true,
+    };
+    let mut included = false;
+    for pattern in patterns {
+        // A directory included by a files entry includes all of its descendants.
+        if Path::new(path)
+            .ancestors()
+            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            .any(|ancestor| pattern.matcher.matches_path_with(ancestor, options))
+        {
+            included = pattern.include;
+        }
+    }
+    included
 }
 
 impl Packed {
@@ -56,28 +82,30 @@ impl Packed {
 }
 
 pub(super) fn build(root: &Path, data: &Value, config: &Config) -> Result<Packed> {
-    let mut allow = GitignoreBuilder::new(root);
+    let mut allow = Vec::new();
     let has_files = data.get("files").is_some();
     if let Some(files) = data.get("files") {
         let Value::Array(files) = files else {
             anyhow::bail!("package.json files must be an array");
         };
         for file in files {
-            let pattern = file.string().context("files entries must be strings")?;
-            let (negate, pattern) = pattern
-                .strip_prefix('!')
-                .map_or(("", pattern), |p| ("!", p));
-            let pattern = pattern.trim_start_matches("./").trim_start_matches('/');
+            let raw = file.string().context("files entries must be strings")?;
+            let (include, raw) = raw.strip_prefix('!').map_or((true, raw), |p| (false, p));
+            let pattern = raw.trim_start_matches("./").trim_start_matches('/');
             ensure!(
-                !pattern.contains('\\') && !pattern.split('/').any(|p| p == ".."),
+                !pattern.contains(['\\', ':', '\0'])
+                    && !pattern.split('/').any(|p| p == ".."),
                 "unsafe files pattern"
             );
             if !pattern.is_empty() {
-                allow.add_line(None, &format!("{negate}/{pattern}"))?;
+                allow.push(AllowPattern {
+                    include,
+                    matcher: Pattern::new(pattern)
+                        .with_context(|| format!("invalid files glob: {pattern}"))?,
+                });
             }
         }
     }
-    let allow = allow.build()?;
     let mut forced = vec!["package.json".to_owned()];
     if let Some(main) = data.str("main") {
         forced.push(relative(main)?);
@@ -211,7 +239,7 @@ fn walk(
     dir: &Path,
     ignores: &mut Vec<Gitignore>,
     has_files: bool,
-    allow: &Gitignore,
+    allow: &[AllowPattern],
     forced: &[String],
     files: &mut Vec<File>,
 ) -> Result<()> {
@@ -282,7 +310,7 @@ fn walk(
         } else if metadata.is_file()
             && (always
                 || (!ignored
-                    && (!has_files || allow.matched_path_or_any_parents(&path, false).is_ignore())))
+                    && (!has_files || allowlisted(&relative, allow))))
         {
             #[cfg(unix)]
             let executable = {
