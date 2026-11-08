@@ -4,8 +4,9 @@
 use crate::{config::Config, json::Value, scripts};
 use anyhow::{Context, Result};
 use std::{
-    env, fs,
+    env,
     ffi::OsString,
+    fs,
     path::Path,
     process::Command,
 };
@@ -27,7 +28,9 @@ pub fn shim(root: &Path, config: &Config) -> Result<Option<tempfile::TempDir>> {
         return Ok(None);
     }
 
-    let dir = tempfile::Builder::new().prefix("tnpm-tsrs-").tempdir()?;
+    let dir = tempfile::Builder::new()
+        .prefix("tnpm-tsrs-")
+        .tempdir()?;
     let binary = env::current_exe().context("could not locate tnpm executable")?;
     #[cfg(windows)]
     {
@@ -73,7 +76,10 @@ fn typescript_71(root: &Path) -> bool {
             return false;
         };
         let mut components = version.trim_start_matches('v').split('.');
-        matches!((components.next(), components.next()), (Some("7"), Some("1")))
+        matches!(
+            (components.next(), components.next()),
+            (Some("7"), Some("1"))
+        )
     })
 }
 
@@ -111,7 +117,10 @@ pub fn dispatch(shim_dir: &Path, args: Vec<OsString>) -> Result<()> {
     } else {
         Command::new("tsrs")
     };
-    let status = command.args(args).status().context("could not launch TypeScript checker")?;
+    let status = command
+        .args(args)
+        .status()
+        .context("could not launch TypeScript checker")?;
     scripts::check(status)
 }
 
@@ -122,10 +131,7 @@ fn bundled_binary() -> Result<Option<std::path::PathBuf>> {
 
     let home = dirs::cache_dir().unwrap_or_else(env::temp_dir);
     let root = home.join("tnpm/toolchain/tsrs");
-    let location = root.join(format!(
-        "{TSRS_VERSION}-{}",
-        env!("TNPM_TSRS_TARGET")
-    ));
+    let location = root.join(format!("{TSRS_VERSION}-{}", env!("TNPM_TSRS_TARGET")));
     let name = if cfg!(windows) { "tsrs.exe" } else { "tsrs" };
     let executable = location.join(name);
     if executable.is_file() {
@@ -133,7 +139,9 @@ fn bundled_binary() -> Result<Option<std::path::PathBuf>> {
     }
 
     fs::create_dir_all(&root)?;
-    let temp = tempfile::Builder::new().prefix("tsrs-unpack-").tempdir_in(&root)?;
+    let temp = tempfile::Builder::new()
+        .prefix("tsrs-unpack-")
+        .tempdir_in(&root)?;
     let staging = temp.path().join("payload");
     fs::create_dir(&staging)?;
     Archive::new(GzDecoder::new(BUNDLE))
@@ -153,7 +161,7 @@ fn bundled_binary() -> Result<Option<std::path::PathBuf>> {
 }
 
 #[cfg(not(tnpm_bundled_tsrs))]
-fn bundled_binary() -> Result<Option<PathBuf>> {
+fn bundled_binary() -> Result<Option<std::path::PathBuf>> {
     Ok(None)
 }
 
