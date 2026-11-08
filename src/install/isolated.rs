@@ -168,6 +168,10 @@ pub(super) fn convert(
     lock: &Lockfile,
     selected: &BTreeSet<String>,
 ) -> Result<()> {
+    // Refuse pre-existing links into untrusted directories and do not follow a
+    // symlinked marker when writing it.
+    super::tree::ensure_safe_parents(root, "node_modules/.tnpm")?;
+    super::tree::ensure_safe_parents(root, MARKER)?;
     // Mark before relocating anything: a failed conversion is discarded on the
     // next install rather than treating half-moved packages as hoisted.
     fs::write(root.join(MARKER), "isolated\n")?;
