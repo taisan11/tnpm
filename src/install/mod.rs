@@ -17,6 +17,9 @@ use std::{collections::BTreeSet, fs, path::Path};
 mod audit;
 mod bundles;
 mod context;
+mod hardlinks;
+#[cfg(windows)]
+mod junction;
 mod isolated;
 mod overrides;
 mod platform;
