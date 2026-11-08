@@ -17,4 +17,26 @@
 - 宣言された workspace だけは検証済みソースへの symlink を許可し、競合する子依存をその workspace の node_modules に配置します。`file:` のコピー、Git のコミットと integrity、bundled package の archive 内パスも独自 lockfile に保持します。[依存ソースの仕様](dependency-sources.md)。
 - 依存の `preinstall` / `install` / `postinstall` とソースの prepare / 暗黙の node-gyp は許可リスト制です。Bun 由来の既定リストにルートの `trustedDependencies` / `--trust` を追加し、許可した依存とルート / workspace のフックだけ実行します。`--ignore-scripts` はすべて停止します。hidden lockfile の `tnpmBuilds` に成功記録を持ち、後から許可した依存や `--ignore-scripts` 後の未ビルド依存を次回 install で実行できます。[信頼設定と rebuild](security-and-diagnostics.md)。
 
+## 配置方式と共有ストア
+
+従来の巻き上げ配置は `node-linker=hoisted`（既定）です。分離インストールは `node-linker=isolated` で有効にします。
+
+```sh
+tnpm install --node-linker=isolated
+tnpm ci --node-linker=isolated --offline
+```
+
+ユーザー共通の `~/.npmrc` に指定すると全プロジェクトの既定値を変えられます。プロジェクトの `.npmrc`、`npm_config_node_linker`、CLI の `--node-linker` の順に上書きできます。
+
+```ini
+node-linker=isolated
+store-dir=~/.tnpm/cache
+```
+
+- `isolated`: `node_modules/.tnpm/<id>/node_modules/<package>` に各依存の実体を配置し、プロジェクト直下と各パッケージから、宣言済みの依存だけをディレクトリリンクで参照します。peer と optional 依存も解決済み lockfile に従います。
+- `store-dir`: integrity 検証済みの展開済みレジストリパッケージを保存する共有ディレクトリ。既定は `~/.tnpm/cache`、実体はその `packages-v2/` 内です。絶対パスを指定します。CoW clone またはコピーで配置し、install script の変更は共有キャッシュへ書き戻されません。`-g` によるグローバルインストールとは異なります。
+- 配置方式の切り替え時と分離配置への再インストール時は `node_modules` を再構築します。lockfile の形式は変わりません。
+- 分離配置では現在 `rebuild` と通常の `prune` に未対応です。`tnpm install` で再配置するか、`tnpm prune --all` で全削除してください。依存 lifecycle script は現時点では hoisted の一時配置で実行後、分離リンクへ変換されます。
+- Windows の分離リンクはディレクトリ symlink を使うため、開発者モードなど symlink 作成権限が必要です。権限不足時は失敗し、自動コピーには切り替えません。
+
 調査時だけ `TNPM_PROFILE=1` と `TNPM_PROFILE_TRANSPORT=baseline|gzip|http2|both|default` を組み合わせると、圧縮・HTTP バージョンの条件を切り替えられます。通常実行は常にデフォルト機能と全圧縮形式を利用します。以前の調査用 Cargo feature `profile-gzip` / `profile-http2` は不要になりました。
