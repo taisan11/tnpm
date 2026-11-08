@@ -34,9 +34,10 @@ store-dir=~/.tnpm/cache
 ```
 
 - `isolated`: `node_modules/.tnpm/<id>/node_modules/<package>` に各依存の実体を配置し、プロジェクト直下と各パッケージから、宣言済みの依存だけをディレクトリリンクで参照します。peer と optional 依存も解決済み lockfile に従います。
-- `store-dir`: integrity 検証済みの展開済みレジストリパッケージを保存する共有ディレクトリ。既定は `~/.tnpm/cache`、実体はその `packages-v2/` 内です。絶対パスを指定します。CoW clone またはコピーで配置し、install script の変更は共有キャッシュへ書き戻されません。`-g` によるグローバルインストールとは異なります。
+- `store-dir`: 共有パッケージストアの親ディレクトリ（既定 `~/.tnpm/cache`）。展開済み取得用は `packages-v2/`、分離配置の内容アドレス付きファイル用は `files-v1/` です。分離配置ではファイル単位で **`fs::hard_link` のみ**を使い、CoW や通常コピーへのフォールバックはしません。取得後の一時配置で lifecycle script を実行し、その最終内容を SHA-256 でストアに登録してからハードリンクします。`-g` とは別機能です。
 - 配置方式の切り替え時と分離配置への再インストール時は `node_modules` を再構築します。lockfile の形式は変わりません。
 - 分離配置では現在 `rebuild` と通常の `prune` に未対応です。`tnpm install` で再配置するか、`tnpm prune --all` で全削除してください。依存 lifecycle script は現時点では hoisted の一時配置で実行後、分離リンクへ変換されます。
-- Windows の分離リンクはディレクトリ symlink を使うため、開発者モードなど symlink 作成権限が必要です。権限不足時は失敗し、自動コピーには切り替えません。
+- Windows の依存ディレクトリリンクには、特別なシンボリックリンク権限を要求しない NTFS Junction（`mklink /J` 相当）を使用します。Linux/macOS はディレクトリ symlink です。ファイルのハードリンクには Windows の NTFS と同じボリューム、または Unix の同一ファイルシステムが必要です。異なるボリュームに設定した場合はコピーで代替せずエラーを返します。
+- ハードリンクは同じファイル実体を共有するため、インストール後にパッケージファイルを**直接編集するとストアや別プロジェクトにも影響します**。将来のインストールでのストア再利用時は SHA-256 で再検証します。Unix ではストアへの登録時に書き込み権限を外します。Windows はリンク先の改変防止を保証しません。
 
 調査時だけ `TNPM_PROFILE=1` と `TNPM_PROFILE_TRANSPORT=baseline|gzip|http2|both|default` を組み合わせると、圧縮・HTTP バージョンの条件を切り替えられます。通常実行は常にデフォルト機能と全圧縮形式を利用します。以前の調査用 Cargo feature `profile-gzip` / `profile-http2` は不要になりました。
