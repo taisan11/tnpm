@@ -9,6 +9,16 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    println!("cargo::rerun-if-env-changed=TNPM_TSRS_BUNDLE");
+    println!("cargo::rustc-check-cfg=cfg(tnpm_bundled_tsrs)");
+    if let Some(bundle) = std::env::var_os("TNPM_TSRS_BUNDLE") {
+        let bundle = PathBuf::from(bundle);
+        assert!(bundle.is_file(), "TNPM_TSRS_BUNDLE must point to a tar.gz");
+        println!("cargo::rerun-if-changed={}", bundle.display());
+        println!("cargo::rustc-env=TNPM_TSRS_BUNDLE={}", bundle.canonicalize().unwrap().display());
+        println!("cargo::rustc-env=TNPM_TSRS_TARGET={}", std::env::var("TARGET").unwrap());
+        println!("cargo::rustc-cfg=tnpm_bundled_tsrs");
+    }
     println!("cargo::rerun-if-changed=build.rs");
     // Resolve paths through Git so linked worktrees and packed refs also work.
     for name in ["HEAD", "refs", "packed-refs"] {
