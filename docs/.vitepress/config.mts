@@ -68,14 +68,6 @@ export default defineConfig({
         ] },
       ],
     },
-    search: { provider: 'local', options: { translations: {
-      button: { buttonText: '検索', buttonAriaLabel: 'ドキュメントを検索' },
-      modal: {
-        noResultsText: '該当するページがありません',
-        resetButtonTitle: '検索をリセット',
-        footer: { selectText: '選択', navigateText: '移動', closeText: '閉じる' },
-      },
-    } } },
     outline: { level: [2, 3], label: 'このページの目次' },
     docFooter: { prev: '前へ', next: '次へ' },
     lastUpdated: { text: '最終更新' },
