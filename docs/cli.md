@@ -5,6 +5,8 @@
 - `-g` / `--global`: ユーザー領域へのグローバル install / uninstall / update / outdated / ls。`--prefix` はグローバル prefix になります。
 - `-w NAME_OR_PATH` / `--workspace NAME_OR_PATH`: workspace の選択（複数回可）。`--workspaces`: すべてを選択。`run` のスクリプト名より前に指定します。
 - `--engine-strict`: engines.node / engines.tnpm の不一致をエラーにします（`--force` で警告）。
+- `--node-linker hoisted|isolated`: インストール時の配置方式。`~/.npmrc` の `node-linker` でも設定できます。
+- `--store-dir PATH`: 共有の展開済みパッケージストア。`~/.npmrc` の `store-dir` でも設定できます。
 
 詳しくは [workspaces と依存ソース](dependency-sources.md) を参照してください。
 
@@ -71,6 +73,8 @@ tnpm ls --depth=1 --json
 | `--registry URL` | レジストリを使用するコマンドの URL を指定。スコープ設定・認証の詳細は [npmrc](npmrc.md)。 |
 | `--userconfig PATH` | 読み込む user npmrc を指定。 |
 | `--globalconfig PATH` | 読み込む global npmrc を指定。 |
+| `--node-linker hoisted\|isolated` | install / ci / update / uninstall の配置方法。既定は hoisted。 |
+| `--store-dir PATH` | 展開済みパッケージの共有キャッシュディレクトリ（絶対パス）。 |
 | `--no-cache` | `view` や install 系のレジストリ／パッケージキャッシュを読み書きせず、`exec` / `create` は再解決。install 系では `--offline` と併用不可。 |
 | `run --no-cache FILE` | 直接実行の URL ソースを再取得し、ランナー用の隔離パッケージを再解決。URL ソースの永続キャッシュは読み書きしない。 |
 
