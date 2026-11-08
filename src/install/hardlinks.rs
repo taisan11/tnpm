@@ -39,7 +39,7 @@ fn object_path(store: &Path, digest: &[u8; 32], executable: bool) -> PathBuf {
 fn executable(path: &Path) -> Result<bool> {
     #[cfg(unix)]
     {
-        return Ok(fs::metadata(path)?.permissions().mode() & 0o111 != 0);
+        Ok(fs::metadata(path)?.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
     {
