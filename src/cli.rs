@@ -294,7 +294,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
     {
         bail!("--access must be public or restricted");
     }
-    if options.node_linker.as_deref().is_some_and(|s| !matches!(s, "hoisted" | "isolated")) {
+    if options
+        .node_linker
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "hoisted" | "isolated"))
+    {
         bail!("--node-linker must be hoisted or isolated");
     }
     if let Some(scope) = &options.scope {
