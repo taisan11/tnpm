@@ -13,9 +13,9 @@ mod profile;
 mod registry;
 mod runner;
 mod scripts;
-mod toolchain;
 mod semver;
 mod spec;
+mod toolchain;
 mod util;
 mod workspaces;
 
