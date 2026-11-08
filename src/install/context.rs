@@ -158,9 +158,12 @@ impl<'a> Context<'a> {
         if !lockfile::valid_name(name) {
             bail!("invalid package name: {name}");
         }
-        let url = self
-            .config
-            .registry_url(name, self.options.registry.as_deref())?;
+        let url = if name.starts_with("@jsr/") {
+            crate::jsr::registry_url(self.config, name)?
+        } else {
+            self.config
+                .registry_url(name, self.options.registry.as_deref())?
+        };
         let authorization = self.config.authorization(&url)?;
         let label = format!("{name}@{spec}");
         self.progress.start("resolve", &label);
