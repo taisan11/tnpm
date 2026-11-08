@@ -107,7 +107,7 @@ fn ensure_install_path(
     Ok(())
 }
 
-fn remove_path(path: &Path) -> Result<()> {
+pub(super) fn remove_path(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => fs::remove_dir_all(path)?,
         Ok(_) => fs::remove_file(path)?,
@@ -165,6 +165,13 @@ fn scan(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
 
 pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     ensure_safe_parents(root, "node_modules")?;
+    if super::isolated::active(root) {
+        let mut lock = Lockfile::read(root)?.unwrap_or_default();
+        lock.packages.retain(|path, _| {
+            !path.is_empty() && super::isolated::package_path(root, path).join("package.json").is_file()
+        });
+        return Ok(lock);
+    }
     scan(ctx, root)
 }
 
@@ -340,6 +347,13 @@ pub(super) async fn materialize(
     clean: bool,
 ) -> Result<()> {
     ctx.warn_peers(lock);
+    let was_isolated = super::isolated::active(root);
+    if was_isolated {
+        // An isolated graph cannot be scanned or mutated as a hoisted tree.
+        ensure_safe_parents(root, "node_modules")?;
+        remove_path(&root.join("node_modules"))?;
+    }
+    let clean = clean || was_isolated;
     ensure_safe_parents(root, "node_modules")?;
     // Validate all paths before mutating the tree.
     for path in lock.packages.keys().filter(|p| !p.is_empty()) {
@@ -641,6 +655,10 @@ pub(super) async fn materialize(
                 ctx.lifecycle(root, manifest, event)?;
             }
         }
+        if ctx.config.get("node-linker") == Some("isolated") {
+            ctx.progress.event("place", "linking isolated dependencies");
+            super::isolated::convert(ctx, root, manifest, lock, &selected)?;
+        }
         let mut hidden = lock.clone();
         hidden.packages.retain(|path, _| selected.contains(path));
         builds.retain(|path, _| {
@@ -663,6 +681,9 @@ pub(super) async fn materialize(
 }
 
 pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
+    if super::isolated::active(root) {
+        bail!("rebuild on isolated installs is not supported yet; run tnpm install to rebuild the layout");
+    }
     anyhow::ensure!(
         ctx.options.passthrough.is_empty(),
         "unexpected arguments after --"
@@ -759,6 +780,9 @@ pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
 pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
     if ctx.options.lock_only {
         bail!("prune --package-lock-only is not supported");
+    }
+    if !ctx.options.all && super::isolated::active(root) {
+        bail!("prune on isolated installs is not supported yet; run tnpm install to refresh dependencies");
     }
     if ctx.options.all {
         if !ctx.options.arguments.is_empty() || ctx.options.omit.is_some() || ctx.options.production
