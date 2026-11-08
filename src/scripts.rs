@@ -169,10 +169,6 @@ pub fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
-pub fn lifecycle(root: &Path, manifest: &Value, event: &str) -> Result<()> {
-    lifecycle_output(root, manifest, event, false)
-}
-
 pub fn lifecycle_with_bin(
     root: &Path,
     manifest: &Value,
