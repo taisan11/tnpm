@@ -47,13 +47,15 @@ pub fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
         bail!("missing script: {event}");
     };
     let manifest = manifest.as_ref().context("package.json not found")?;
+    let shim = crate::toolchain::shim(root, config)?;
+    let tool_bin = shim.as_ref().map(|temp| temp.path());
     let hooks = !options.ignore_scripts && !config.enabled("ignore-scripts");
     if hooks {
-        scripts::lifecycle(root, manifest, &format!("pre{event}"))?;
+        scripts::lifecycle_with_bin(root, manifest, &format!("pre{event}"), tool_bin)?;
     }
-    scripts::command(root, manifest, event, text, &args, None)?;
+    scripts::command(root, manifest, event, text, &args, tool_bin)?;
     if hooks {
-        scripts::lifecycle(root, manifest, &format!("post{event}"))?;
+        scripts::lifecycle_with_bin(root, manifest, &format!("post{event}"), tool_bin)?;
     }
     Ok(())
 }
