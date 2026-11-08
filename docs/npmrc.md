@@ -23,7 +23,7 @@
 - `#` / `;` で始まるコメントと、引用符なしの値の末尾コメント。値の `#` / `;` は引用符で囲むか `\#` / `\;` として記述します。
 - `${NAME}` は環境変数で展開し、未定義ならそのまま保持します。`${NAME?}` は未定義なら空文字列です。
 - `key[] = value` を繰り返す配列。優先度の高いファイルの配列で低いファイルの配列を置き換えます。`get --json` では配列として表示し、`omit[]` は実際の配置にも適用します。
-- `cache` / `prefix` / 設定ファイル・証明書ファイルのパスでは `~/` をホームディレクトリに展開します。
+- `cache` / `prefix` / `store-dir` / 設定ファイル・証明書ファイルのパスでは `~/` をホームディレクトリに展開します。
 
 ```ini
 omit[] = dev
@@ -32,6 +32,22 @@ node-options = "${NODE_OPTIONS?} --use-system-ca"
 ```
 
 未知のキーは保持して `get` で参照できますが、npm の全設定を動作に反映するわけではありません。npm v12 の未知キー警告や `npm config set/edit` は未実装です。上記 `node-options` の例は読み込み・環境変数展開の例で、スクリプト実行への適用は未対応です。
+
+## 分離インストールと共有ストア
+
+ユーザー共通の `$HOME/.npmrc` に設定すると、全プロジェクトの既定値を変更できます。プロジェクトの `.npmrc` や CLI はこれより優先されます。
+
+```ini
+node-linker=isolated
+store-dir=~/.tnpm/cache
+```
+
+- `node-linker=hoisted`（既定）: 従来どおり依存を巻き上げて配置。
+- `node-linker=isolated`: `node_modules/.tnpm/` の仮想ストアに各実体を置き、宣言された依存だけをディレクトリリンクで公開。`tnpm ci` と通常の `install` に適用。
+- `store-dir`: 全プロジェクトで共有する**展開済みパッケージストア**の親ディレクトリ。既定は `~/.tnpm/cache`、展開済みの内容はその下の `packages-v2/` に保存。絶対パスのみ受け付けます。レジストリの HTTP メタデータキャッシュは従来どおり別管理。
+- `npm_config_node_linker` / `npm_config_store_dir` 環境変数でも変更できます。CLI の `--node-linker` / `--store-dir` が最優先です。
+
+詳しい配置方式と現在の制限は [インストールと lockfile](install-and-lockfile.md) を参照してください。
 
 ## レジストリと認証
 
