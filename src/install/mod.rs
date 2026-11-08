@@ -18,9 +18,9 @@ mod audit;
 mod bundles;
 mod context;
 mod hardlinks;
+mod isolated;
 #[cfg(windows)]
 mod junction;
-mod isolated;
 mod overrides;
 mod platform;
 mod report;
