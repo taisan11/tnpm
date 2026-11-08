@@ -172,7 +172,9 @@ pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
                 && if flag(entry, "link") {
                     root.join(path).join("package.json").is_file()
                 } else {
-                    super::isolated::package_path(root, path).join("package.json").is_file()
+                    super::isolated::package_path(root, path)
+                        .join("package.json")
+                        .is_file()
                 }
         });
         return Ok(lock);
@@ -687,7 +689,9 @@ pub(super) async fn materialize(
 
 pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
     if super::isolated::active(root) {
-        bail!("rebuild on isolated installs is not supported yet; run tnpm install to rebuild the layout");
+        bail!(
+            "rebuild on isolated installs is not supported yet; run tnpm install to rebuild the layout"
+        );
     }
     anyhow::ensure!(
         ctx.options.passthrough.is_empty(),
@@ -787,7 +791,9 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
         bail!("prune --package-lock-only is not supported");
     }
     if !ctx.options.all && super::isolated::active(root) {
-        bail!("prune on isolated installs is not supported yet; run tnpm install to refresh dependencies");
+        bail!(
+            "prune on isolated installs is not supported yet; run tnpm install to refresh dependencies"
+        );
     }
     if ctx.options.all {
         if !ctx.options.arguments.is_empty() || ctx.options.omit.is_some() || ctx.options.production
