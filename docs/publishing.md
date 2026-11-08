@@ -39,7 +39,7 @@ tnpm --prefix ./packages/widget publish
 
 - 対象はローカルディレクトリのみ（省略時はプロジェクトルート）。`package.json` の名前・バージョンが必須です。名前は小文字の npm 名、バージョンは `1.2.3` / `1.2.3-beta.1` など正規形の SemVer で指定してください。`private` パッケージの publish は `--dry-run` でも拒否します（pack は可能）。
 - `pack` は実行時の作業ディレクトリ、または `--pack-destination` に `<name>-<version>.tgz` を保存します。スコープ付きは `team-widget-1.2.3.tgz` の形式です。同名ファイルは一時ファイルから置き換えます。`publish` は tarball をディスクに保存しません。
-- `files` 配列で含めるパス・glob を指定できます。ルートの `.npmignore`（なければ `.gitignore`）を使用し、`files` があればルートの ignore ファイルより配列を優先します。サブディレクトリの ignore ファイル、`!` による再包含も扱います。
+- `files` 配列で含めるパス・glob を指定できます。パターン選択には Rust の `glob` crate を使用し、`*` / `?` / `**` / `[ab]` / `[0-9]` などを扱います（brace 展開は未対応）。配列の先頭 `!` は後続の除外パターンです。ルートの `.npmignore`（なければ `.gitignore`）を使用し、`files` があればルートの ignore ファイルより配列を優先します。サブディレクトリの ignore ファイル、ignore ファイル内の `!` による再包含も扱います。
 - `package.json`、ルートの README / LICENSE / LICENCE / COPYING（拡張子付き可）、`main`、`bin` は原則として含めます。ただし、下記の強制除外・symlink の除外は優先されます。
 - **強制除外**: `node_modules`、`.git` / `.hg` / `.svn` / `.tnpm`、`.npmrc`、ignore ファイル、`.env` / `.env.*`、`*.pem` / `*.key`、`id_rsa` / `id_ed25519`、既存 `*.tgz`、主要 lockfile（`npm-shrinkwrap.json` も含む）、`.DS_Store`、`npm-debug.log`。symlink は参照先を辿らず除外します。これは npm より保守的な仕様です。
 - ファイル名をソートし、tar / gzip の時刻を固定して tarball を作ります。通常ファイルは mode 0644、実行可能ファイルと `bin` は 0755。SHA-512 integrity と SHA-1 shasum を計算してレジストリの公開メタデータに含めます。
