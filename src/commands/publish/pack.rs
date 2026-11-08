@@ -93,8 +93,7 @@ pub(super) fn build(root: &Path, data: &Value, config: &Config) -> Result<Packed
             let (include, raw) = raw.strip_prefix('!').map_or((true, raw), |p| (false, p));
             let pattern = raw.trim_start_matches("./").trim_start_matches('/');
             ensure!(
-                !pattern.contains(['\\', ':', '\0'])
-                    && !pattern.split('/').any(|p| p == ".."),
+                !pattern.contains(['\\', ':', '\0']) && !pattern.split('/').any(|p| p == ".."),
                 "unsafe files pattern"
             );
             if !pattern.is_empty() {
@@ -308,9 +307,7 @@ fn walk(
                 walk(root, &path, ignores, has_files, allow, forced, files)?;
             }
         } else if metadata.is_file()
-            && (always
-                || (!ignored
-                    && (!has_files || allowlisted(&relative, allow))))
+            && (always || (!ignored && (!has_files || allowlisted(&relative, allow))))
         {
             #[cfg(unix)]
             let executable = {
