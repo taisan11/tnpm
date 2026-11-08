@@ -62,7 +62,8 @@ npm の一部コマンドと独自 lockfile をサポートしていますが、
 
 ## ドキュメント・開発
 
-- [ドキュメント一覧](docs/README.md)
+- [VitePress ドキュメント](docs/index.md) / [ドキュメント一覧](docs/README.md)
+- [package.json リファレンス](docs/reference/package-json.md) / [.npmrc リファレンス](docs/reference/npmrc.md) / [用途別 CLI リファレンス](docs/reference/cli/index.md)
 - [インストール方法](docs/installation.md) / [コマンド一覧](docs/commands.md)
 - [依存解決・lockfile](docs/install-and-lockfile.md) / [キャッシュ](docs/registry-cache.md)
 - [アーキテクチャ](docs/architecture.md) / [開発とテスト](docs/development.md)

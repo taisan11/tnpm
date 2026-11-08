@@ -1,6 +1,6 @@
 # 依存ライブラリとビルド構成
 
-性能・サイズ・動作特性に関係する主要な依存関係をまとめます。通常の利用方法は [README](../README.md) を参照してください。
+性能・サイズ・動作特性に関係する主要な依存関係をまとめます。通常の利用方法は [README](https://github.com/taisan11/tnpm/blob/main/README.md) を参照してください。
 
 ## 依存 feature
 

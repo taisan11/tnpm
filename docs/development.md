@@ -62,4 +62,4 @@ TNPM_BENCH_BUN_TESTS=1 node --test benchmarks/tests/bun.test.mjs
 通常の Node.js テストは loopback HTTP と fixture / モックだけを使い、公開レジストリには接続しません。`live.test.mjs` も実ネットワークの性能測定ではありません。
 引数生成・出力検証だけのテストには `benchmarks/tests/support.mjs` の設定モックを使い、実サーバーや依存ツリーの生成は fixture 自体の検証に限定します。
 
-実測はテストと分け、[ベンチマーク手順](../benchmarks/README.md) に従います。`--live`、install の warmup、通信 profile / transport 比較は公開サービスに接続するため、通常の検証では実行しません。過去の `benchmarks/results/` は測定履歴として保持し、[結果の索引](../benchmarks/results/README.md) から参照できます。
+実測はテストと分け、[ベンチマーク手順](https://github.com/taisan11/tnpm/blob/main/benchmarks/README.md) に従います。`--live`、install の warmup、通信 profile / transport 比較は公開サービスに接続するため、通常の検証では実行しません。過去の `benchmarks/results/` は測定履歴として保持し、[結果の索引](https://github.com/taisan11/tnpm/blob/main/benchmarks/results/README.md) から参照できます。
