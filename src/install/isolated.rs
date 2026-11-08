@@ -55,7 +55,7 @@ fn relative(from: &Path, target: &Path) -> PathBuf {
 
 fn directory_link(target: &Path, destination: &Path) -> Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(destination) {
-        if metadata.file_type().is_symlink()
+        if super::tree::is_link(&metadata)
             && let (Ok(actual), Ok(expected)) =
                 (fs::canonicalize(destination), fs::canonicalize(target))
             && actual == expected
@@ -71,11 +71,8 @@ fn directory_link(target: &Path, destination: &Path) -> Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::symlink(relative(destination.parent().unwrap(), target), destination)?;
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(target, destination).with_context(|| {
-        format!(
-            "could not link {}; enable Windows Developer Mode to allow directory symlinks",
-            destination.display()
-        )
+    super::junction::create(target, destination).with_context(|| {
+        format!("could not create directory junction: {}", destination.display())
     })?;
     Ok(())
 }
@@ -105,11 +102,7 @@ fn binaries(modules: &Path, dependencies: &[(String, PathBuf)]) -> Result<()> {
             }
             #[cfg(unix)]
             {
-                use std::os::unix::fs::{PermissionsExt, symlink};
-                fs::set_permissions(
-                    &source,
-                    fs::Permissions::from_mode(fs::metadata(&source)?.permissions().mode() | 0o111),
-                )?;
+                use std::os::unix::fs::symlink;
                 let target = Path::new("..").join(package_name).join(&entry);
                 let destination = bin.join(&name);
                 if fs::symlink_metadata(&destination).is_err() {
@@ -175,6 +168,7 @@ pub(super) fn convert(
     // Mark before relocating anything: a failed conversion is discarded on the
     // next install rather than treating half-moved packages as hoisted.
     fs::write(root.join(MARKER), "isolated\n")?;
+    let store = Path::new(ctx.config.get("store-dir").context("missing store-dir")?);
     let mut order: Vec<_> = selected
         .iter()
         .filter(|path| !flag(&lock.packages[*path], "link"))
@@ -203,6 +197,9 @@ pub(super) fn convert(
         )?;
         fs::rename(&source, &destination)
             .with_context(|| format!("could not move {path} into isolated store"))?;
+        // Publish each final (including script-generated) file by content hash.
+        // The virtual store contains hardlinks, never CoW clones/copies.
+        super::hardlinks::link_package(&destination, store)?;
     }
     // Workspace dependencies may have been installed inside the symlink target.
     // Their payloads have already been relocated above; replace the old hoisted
