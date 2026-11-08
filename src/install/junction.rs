@@ -39,7 +39,10 @@ pub(super) fn create(target: &Path, destination: &Path) -> io::Result<()> {
     let print_len = printable.len() * 2;
     let data_len = 8 + substitute_len + 2 + print_len + 2;
     if data_len > 0x3ff0 || data_len > u16::MAX as usize {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "junction target is too long"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "junction target is too long",
+        ));
     }
     let mut data = Vec::with_capacity(data_len + 8);
     data.extend_from_slice(&0xA000_0003u32.to_le_bytes()); // IO_REPARSE_TAG_MOUNT_POINT
