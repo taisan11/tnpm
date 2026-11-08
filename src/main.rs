@@ -15,6 +15,7 @@ mod runner;
 mod scripts;
 mod semver;
 mod spec;
+mod toolchain;
 mod util;
 mod workspaces;
 
@@ -29,7 +30,11 @@ fn main() -> std::process::ExitCode {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error:#}");
-                std::process::ExitCode::FAILURE
+                if let Some(error) = error.downcast_ref::<scripts::CommandFailed>() {
+                    std::process::ExitCode::from(error.0.code().unwrap_or(1).clamp(1, 255) as u8)
+                } else {
+                    std::process::ExitCode::FAILURE
+                }
             }
         };
     }

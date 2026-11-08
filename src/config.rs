@@ -91,6 +91,7 @@ impl Config {
                 ("cache".into(), format!("{home}/.npm")),
                 ("store-dir".into(), format!("{home}/.tnpm/cache")),
                 ("node-linker".into(), "hoisted".into()),
+                ("toolchain-tsrs".into(), "auto".into()),
                 ("userconfig".into(), userconfig.clone()),
                 ("globalconfig".into(), globalconfig.clone()),
                 ("git-tag-version".into(), "true".into()),
@@ -137,6 +138,12 @@ impl Config {
             .is_some_and(|value| Path::new(value).is_absolute())
         {
             bail!("store-dir must be an absolute path");
+        }
+        if !matches!(
+            config.get("toolchain-tsrs"),
+            Some("auto" | "on" | "off" | "true" | "false")
+        ) {
+            bail!("toolchain-tsrs must be auto, on, or off");
         }
         if let Some(registry) = &options.registry {
             config.set("registry".into(), registry.clone());

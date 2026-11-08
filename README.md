@@ -13,6 +13,7 @@ Rust 製の軽量な npm 互換パッケージマネージャー。**npm との�
 - `login` / `logout` / `whoami` と `pack` / `publish` / `dist-tag` に対応（[認証と公開](docs/publishing.md)）
 - 依存スクリプトの信頼リスト、`rebuild`、`why` / `explain`、`audit`、workspace の並列・依存順実行に対応
 - JS / TS 直接実行で HTTP(S)・`jsr:`・`npm:` import を解決
+- TypeScript 7.1 プロジェクトでは `tnpm run` 内の `tsc` を tsrs へ自動切り替え（[ツールチェーン](docs/toolchain.md)、互換性に制限あり）
 
 ## インストール
 

@@ -20,6 +20,8 @@ mod runner;
 #[cfg(not(windows))]
 mod shell_alias;
 mod tarball_url;
+#[cfg(not(windows))]
+mod toolchain;
 mod trust_rebuild;
 mod update;
 #[cfg(windows)]
