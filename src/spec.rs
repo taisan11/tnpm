@@ -39,11 +39,8 @@ pub fn package_spec(spec: &str) -> Result<(&str, Option<&str>)> {
 /// Keep the installation name separate from the package fetched from a registry.
 pub fn dependency_target<'a>(name: &'a str, selector: &'a str) -> Result<(Cow<'a, str>, &'a str)> {
     if selector.starts_with("jsr:") {
-        let jsr = crate::jsr::Specifier::parse(selector)?;
-        if !jsr.subpath.is_empty() {
-            bail!("JSR dependencies cannot select an export subpath");
-        }
-        return Ok((Cow::Owned(jsr.npm_name()), jsr.range));
+        let (target, range) = crate::jsr::dependency_target(selector)?;
+        return Ok((Cow::Owned(target), range));
     }
     if let Some(target) = selector.strip_prefix("npm:") {
         let (name, selector) = package_spec(target)?;
