@@ -122,7 +122,11 @@ fn jsr_registry_is_independent_of_the_npm_registry_override() {
         npm_registry,
         "--ignore-scripts",
     ]);
-    assert!(f.root.join("node_modules/@demo/math/package.json").is_file());
+    assert!(
+        f.root
+            .join("node_modules/@demo/math/package.json")
+            .is_file()
+    );
     assert_eq!(
         f.ok(&[
             "view",
@@ -133,7 +137,13 @@ fn jsr_registry_is_independent_of_the_npm_registry_override() {
         ]),
         "[\n  \"1.0.0\",\n  \"1.1.0\"\n]\n"
     );
-    assert!(f.requests.lock().unwrap().iter().any(|path| path.contains("@jsr")));
+    assert!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|path| path.contains("@jsr"))
+    );
 }
 
 #[cfg(unix)]
