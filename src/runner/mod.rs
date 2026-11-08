@@ -14,6 +14,12 @@ use std::{
 pub fn internal() -> Option<Result<()>> {
     let mut args = env::args_os().skip(1);
     let command = args.next()?;
+    if command == "--tnpm-tsrs-shim" {
+        return Some((|| {
+            let directory = args.next().context("missing toolchain shim directory")?;
+            crate::toolchain::dispatch(Path::new(&directory), args.collect())
+        })());
+    }
     if command == "--tnpm-runner-transform" {
         return Some((|| {
             let path = args.next().context("missing transform path")?;
