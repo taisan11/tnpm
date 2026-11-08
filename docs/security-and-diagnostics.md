@@ -17,7 +17,7 @@
 }
 ```
 
-この例でも esbuild / sharp などの組み込み許可は残ります。空配列も既定リストを無効にしません。組み込みリストはバイナリに同梱し、実行時に GitHub へ取りに行きません。取り込み元とライセンスは [third-party/Bun.md](../third-party/Bun.md) に記録しています。
+この例でも esbuild / sharp などの組み込み許可は残ります。空配列も既定リストを無効にしません。組み込みリストはバイナリに同梱し、実行時に GitHub へ取りに行きません。取り込み元とライセンスは [third-party/Bun.md](https://github.com/taisan11/tnpm/blob/main/third-party/Bun.md) に記録しています。
 
 - 許可する名前はパッケージの**実名**です。`npm:` alias の配置名を信頼済みの名前にしても許可されません。ロックされた実名と実際の manifest の名前の一致も検査します。
 - 依存パッケージ自身や workspace 内の `trustedDependencies` は読みません。外部パッケージが自己承認することはできません。

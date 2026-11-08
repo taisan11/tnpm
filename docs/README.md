@@ -1,6 +1,18 @@
 # ドキュメント
 
-初めて使う場合は [README](../README.md) と [インストール](installation.md) から参照してください。
+tnpm のドキュメントは VitePress で閲覧・検索できます。[サイトのトップ](index.md) / [リファレンス](reference/index.md) / [アーキテクチャ](architecture/index.md)。
+
+ローカルで確認する場合は、リポジトリの `docs/` ディレクトリで `npm install` → `npm run docs:dev` を実行してください。公開用は `npm run docs:build` です（Node.js 22 以上推奨）。GitHub Pages のベースパスは `/tnpm/`、別ホストでは `VITEPRESS_BASE` で変更できます。GitHub Pages の公開にはリポジトリの **Settings → Pages → Build and deployment → GitHub Actions** を選択してください。
+
+## 設定ファイル・コマンドのリファレンス
+
+- [package.json](reference/package-json.md): tnpm が認識する依存・workspace・信頼・公開フィールド
+- [.npmrc](reference/npmrc.md): 優先順位、設定キー、共有ストア・分離配置、認証
+- [コマンド一覧](reference/cli/index.md): 用途別に整理した CLI リファレンス
+- [アーキテクチャ](architecture/index.md): 依存解決、ストレージ・配置、実行系を分離した内部設計
+
+
+初めて使う場合は [README](https://github.com/taisan11/tnpm/blob/main/README.md) と [インストール](installation.md) から参照してください。
 
 ## 利用者向け
 
@@ -25,5 +37,5 @@
 - [peerDependencies](peer-dependencies.md): 対応仕様と検証範囲
 - [レジストリキャッシュ](registry-cache.md): メタデータキャッシュと HTTP キャッシュポリシー
 - [バイナリキャッシュ形式](cache-format.md): 永続化形式の詳細
-- [ベンチマーク](../benchmarks/README.md): 測定条件、実行方法、結果
-- [コーディングエージェント向けガイド](../AGENTS.md): 変更時の規約と検証
+- [ベンチマーク](https://github.com/taisan11/tnpm/blob/main/benchmarks/README.md): 測定条件、実行方法、結果
+- [コーディングエージェント向けガイド](https://github.com/taisan11/tnpm/blob/main/AGENTS.md): 変更時の規約と検証

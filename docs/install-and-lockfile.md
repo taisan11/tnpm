@@ -6,7 +6,7 @@
 
 - `tnpm-lock.json`（JSON、`tnpmLockfileVersion: 1`）を使用します。パッケージごとに `[version, resolved, integrity, その他のフィールド]` を1行に保存します。npm の `package-lock.json` と `npm-shrinkwrap.json` は読み書きしません。`--package-lock-only` は `tnpm-lock.json` のみを更新します。
 - メタデータ・tarball を最大16並列で取得し、HTTP 接続を再利用。展開は blocking pool へ分離します。同じ name/range の解決は実行中に共有します。
-- lockfile の到達可能性検証・依存フラグの分類は、借用した文字列と連続した依存先 ID・オフセット・フラグ配列で走査します。JSON 全体の複製やキュー内のパス文字列コピーを避け、インストール対象の絞り込みも JSON を複製せず行います。npm の lockfile 形式は変更しません。[変更前後のローカル測定](../benchmarks/results/graph-layout.md)。
+- lockfile の到達可能性検証・依存フラグの分類は、借用した文字列と連続した依存先 ID・オフセット・フラグ配列で走査します。JSON 全体の複製やキュー内のパス文字列コピーを避け、インストール対象の絞り込みも JSON を複製せず行います。npm の lockfile 形式は変更しません。[変更前後のローカル測定](https://github.com/taisan11/tnpm/blob/main/benchmarks/results/graph-layout.md)。
 - レジストリ tarball は取得時に integrity を検証して展開しますが、元 archive を保存しません。展開済みキャッシュがなければ再取得が必要です。直接 URL ソースの元 archive だけは `source-tarballs-v1` に URL / integrity をキーに保存し、offline 再配置に利用します。
 - 展開済みパッケージは名前とバージョンをキーに `~/.tnpm/cache/packages-v2/` に保存し、クリーン install では再解凍せず配置します。保存時の integrity が lockfile と異なる場合は再利用しません。integrity がない場合は展開済みキャッシュを読み書きせず、毎回取得します。macOS ではディレクトリ単位の `clonefile` を試し、リンクや特殊ファイルがないことを検証します。失敗時はファイル単位にフォールバックします。Linux では `FICLONE` を試し、非対応 filesystem では通常コピーを使用します。コピーオンライトで配置するため、install script による変更は共有キャッシュへ反映されません。認証付き・`--no-cache` の場合は読み書きしません。`--offline` でも展開済みキャッシュを利用できます。旧 `packages-v1` / `tarballs-v1` は使用・削除しません。
 - `prune` は不要な依存を `node_modules` から削除します。`prune --all` / `-a` は `node_modules` 全体を削除し、manifest・lockfile・共有キャッシュを維持します。
