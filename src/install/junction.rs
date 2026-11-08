@@ -3,7 +3,7 @@
 //! use the mount-point reparse tag and work for ordinary users on NTFS.
 use std::{
     fs, io,
-    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
     path::Path,
     ptr,
 };
