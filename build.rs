@@ -15,8 +15,14 @@ fn main() {
         let bundle = PathBuf::from(bundle);
         assert!(bundle.is_file(), "TNPM_TSRS_BUNDLE must point to a tar.gz");
         println!("cargo::rerun-if-changed={}", bundle.display());
-        println!("cargo::rustc-env=TNPM_TSRS_BUNDLE={}", bundle.canonicalize().unwrap().display());
-        println!("cargo::rustc-env=TNPM_TSRS_TARGET={}", std::env::var("TARGET").unwrap());
+        println!(
+            "cargo::rustc-env=TNPM_TSRS_BUNDLE={}",
+            bundle.canonicalize().unwrap().display()
+        );
+        println!(
+            "cargo::rustc-env=TNPM_TSRS_TARGET={}",
+            std::env::var("TARGET").unwrap()
+        );
         println!("cargo::rustc-cfg=tnpm_bundled_tsrs");
     }
     println!("cargo::rerun-if-changed=build.rs");
