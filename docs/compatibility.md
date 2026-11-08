@@ -8,7 +8,7 @@ npm 完全互換を目的とした実装ではありません。npm の `package
 
 npm 全体の完全な互換実装ではありません。`audit fix`、Quick Audit へのフォールバック、meta-vulnerability の算出、`ls` の lockfile のみでの一覧、`fund` のブラウザ選択、npm 内部の全設定既定値は未対応です。
 
-- workspaces はローカルリンクと共有 lockfile、`file:` はディレクトリのコピー / tarball に対応します。workspace パターンは `*` / `?` / `**` と除外パターンに対応し、brace / character class は未対応です。
+- workspaces はローカルリンクと共有 lockfile、`file:` はディレクトリのコピー / tarball に対応します。workspace パターンは Rust の `glob` crate で `*` / `?` / `**` / 文字クラス（`[ab]`, `[0-9]` など）と先頭 `!` の除外に対応します。brace 展開（`{a,b}`）は未対応です。
 - Git は Git CLI を使用し、コミット / タグ / ブランチ / `#semver:` を解決してコミットを固定します。submodule とリポジトリ内の `file:` 依存は未対応です。
 - HTTP(S) tarball URL は直接・推移依存と CLI の裸 URL / `name@URL` に対応します。SHA-512 を固定し、URL の認証情報・archive 内のリンクや traversal・リモート archive 内の `file:` 依存を拒否します。
 - `jsr:` は公式の npm 互換配布物を使い、@jsr スコープの既定レジストリは npm.jsr.io です。直接実行のランナーは HTTP(S) / jsr: / npm: import を解決します。Deno API・import map・URL エントリー実行は未対応です。[JSR と URL import](jsr-and-url-imports.md)。
