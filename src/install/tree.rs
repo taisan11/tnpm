@@ -829,7 +829,7 @@ pub(super) fn prune(ctx: &Context<'_>, root: &Path) -> Result<()> {
         let count = if fs::symlink_metadata(&modules)
             .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         {
-            scan(ctx, root)?.packages.len()
+            snapshot(ctx, root)?.packages.len()
         } else {
             0
         };
