@@ -8,7 +8,7 @@ Rust 製の軽量な npm 互換パッケージマネージャー。**npm との�
 - `npm:` エイリアス、`jsr:` パッケージ、`peerDependencies` に対応（npm の `package-lock.json` は読み書きしません）
 - workspaces、`file:` / Git 依存、`overrides`、ユーザー領域へのグローバルインストールに対応
 - 並列ダウンロード、メタデータキャッシュ、共有パッケージストアでインストールを高速化
-- `hoisted`（既定）と `isolated`（分離）を切り替え可能。`~/.npmrc` で全プロジェクト共通設定にも対応
+- `hoisted`（既定）と `isolated`（ファイルのハードリンク＋依存ディレクトリリンク）を切り替え可能。Windows は権限昇格不要の Junction を使用。`~/.npmrc` で全プロジェクト共通設定にも対応
 - `run`、`exec`、`outdated`、`update`、`view`、`cache` などの CLI コマンドを提供
 - `login` / `logout` / `whoami` と `pack` / `publish` / `dist-tag` に対応（[認証と公開](docs/publishing.md)）
 - 依存スクリプトの信頼リスト、`rebuild`、`why` / `explain`、`audit`、workspace の並列・依存順実行に対応
