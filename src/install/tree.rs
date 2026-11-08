@@ -51,12 +51,25 @@ fn retain_reachable(
     Ok(())
 }
 
+pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return metadata.file_attributes() & 0x400 != 0;
+    }
+    #[cfg(not(windows))]
+    false
+}
+
 pub(super) fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
     let mut path = root.to_owned();
     for component in Path::new(relative).components() {
         path.push(component);
         if let Ok(meta) = fs::symlink_metadata(&path)
-            && meta.file_type().is_symlink()
+            && is_link(&meta)
         {
             bail!(
                 "refusing to modify symlinked installation path: {}",
@@ -82,7 +95,7 @@ fn ensure_install_path(
         }
         logical.push_str(&component.as_os_str().to_string_lossy());
         if let Ok(meta) = fs::symlink_metadata(&current)
-            && meta.file_type().is_symlink()
+            && is_link(&meta)
         {
             let entry = lock
                 .packages
