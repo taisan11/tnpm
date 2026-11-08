@@ -2,13 +2,13 @@
 //! Unlike a reflink/copy this strictly requires a single filesystem/volume.
 use anyhow::{Context as _, Result, bail, ensure};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
 };
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 fn checksum(path: &Path) -> Result<[u8; 32]> {
     let mut file = fs::File::open(path)?;
@@ -79,7 +79,9 @@ fn publish_file(source: &Path, store: &Path) -> Result<PathBuf> {
     if valid_object(&object, &digest, exec)? {
         return Ok(object);
     }
-    let parent = object.parent().context("invalid shared store object path")?;
+    let parent = object
+        .parent()
+        .context("invalid shared store object path")?;
     fs::create_dir_all(parent)?;
     #[cfg(unix)]
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
@@ -122,7 +124,11 @@ fn publish_file(source: &Path, store: &Path) -> Result<PathBuf> {
 
 fn replace_file(path: &Path, store: &Path) -> Result<()> {
     let object = publish_file(path, store)?;
-    let temporary = path.with_file_name(format!(".tnpm-link-{}-{}", std::process::id(), crate::fs::unique()));
+    let temporary = path.with_file_name(format!(
+        ".tnpm-link-{}-{}",
+        std::process::id(),
+        crate::fs::unique()
+    ));
     fs::hard_link(&object, &temporary).with_context(|| {
         format!(
             "cannot hardlink {} from {}: the project and store-dir must be on the same filesystem/Windows volume",
@@ -162,7 +168,10 @@ fn link_tree(directory: &Path, store: &Path, depth: usize) -> Result<()> {
         } else if kind.is_file() && !kind.is_symlink() {
             replace_file(&path, store)?;
         } else {
-            bail!("package contains a link or special file: {}", path.display());
+            bail!(
+                "package contains a link or special file: {}",
+                path.display()
+            );
         }
     }
     Ok(())
