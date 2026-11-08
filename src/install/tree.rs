@@ -122,7 +122,19 @@ fn ensure_install_path(
 
 pub(super) fn remove_path(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => fs::remove_dir_all(path)?,
+        Ok(meta) if is_link(&meta) => {
+            #[cfg(windows)]
+            if meta.is_dir() {
+                // Junctions are directories with a reparse point. Remove the
+                // link itself without traversing the target.
+                fs::remove_dir(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+            #[cfg(not(windows))]
+            fs::remove_file(path)?;
+        }
+        Ok(meta) if meta.is_dir() => fs::remove_dir_all(path)?,
         Ok(_) => fs::remove_file(path)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
