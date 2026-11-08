@@ -1,5 +1,6 @@
-//! JSR specifiers use the official npm compatibility registry on Node.js.
-use crate::{semver, spec};
+//! JSR package routing. Node installations use the official JSR compatibility artifacts,
+//! but the JSR registry and specifier handling remain separate from npm registry options.
+use crate::{config::Config, semver, spec};
 use anyhow::{Context, Result, ensure};
 
 pub struct Specifier<'a> {
@@ -54,6 +55,26 @@ impl<'a> Specifier<'a> {
             self.name.trim_start_matches('@').replace('/', "__")
         )
     }
+}
+
+/// Translate only the artifact identity; never rewrite the user's jsr: dependency.
+pub fn dependency_target(selector: &str) -> Result<(String, &str)> {
+    let jsr = Specifier::parse(selector)?;
+    ensure!(
+        jsr.subpath.is_empty(),
+        "JSR dependencies cannot select an export subpath"
+    );
+    Ok((jsr.npm_name(), jsr.range))
+}
+
+/// The @jsr scope always uses JSR's registry configuration. A CLI --registry
+/// override for ordinary npm packages must not redirect JSR requests to npm.
+pub fn registry_url(config: &Config, name: &str) -> Result<reqwest::Url> {
+    ensure!(
+        name.starts_with("@jsr/"),
+        "expected a JSR npm compatibility package name"
+    );
+    config.registry_url(name, None)
 }
 
 pub fn validate_subpath(path: &str) -> Result<()> {
