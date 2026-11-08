@@ -72,7 +72,10 @@ fn directory_link(target: &Path, destination: &Path) -> Result<()> {
     std::os::unix::fs::symlink(relative(destination.parent().unwrap(), target), destination)?;
     #[cfg(windows)]
     super::junction::create(target, destination).with_context(|| {
-        format!("could not create directory junction: {}", destination.display())
+        format!(
+            "could not create directory junction: {}",
+            destination.display()
+        )
     })?;
     Ok(())
 }
