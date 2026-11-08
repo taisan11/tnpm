@@ -107,7 +107,6 @@ fn store_dir_and_user_configuration_are_shared_across_projects() {
     assert!(!bad.status.success());
 }
 
-
 #[cfg(unix)]
 #[test]
 fn project_files_are_hardlinked_to_global_content_store() {
@@ -131,15 +130,29 @@ fn project_files_are_hardlinked_to_global_content_store() {
             }
         }
     }
-    assert!(store_match, "installed file does not point to shared store inode");
+    assert!(
+        store_match,
+        "installed file does not point to shared store inode"
+    );
 
     f.file("second/package.json", r#"{"dependencies":{"app":"1"}}"#);
     let output = f
         .command()
-        .args(["--prefix", "second", "install", "--node-linker=isolated", "--offline", "--ignore-scripts"])
+        .args([
+            "--prefix",
+            "second",
+            "install",
+            "--node-linker=isolated",
+            "--offline",
+            "--ignore-scripts",
+        ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let second = fs::metadata(f.root.join("second/node_modules/app/index.js")).unwrap();
     assert_eq!(original.dev(), second.dev());
     assert_eq!(original.ino(), second.ino());
@@ -159,10 +172,24 @@ fn windows_uses_directory_junctions_and_hardlinked_payloads() {
     for path in ["node_modules/app", "node_modules/app/node_modules/sub"] {
         let link = f.root.join(path);
         let metadata = fs::symlink_metadata(&link).unwrap();
-        assert_ne!(metadata.file_attributes() & 0x400, 0, "{} is not a junction", link.display());
+        assert_ne!(
+            metadata.file_attributes() & 0x400,
+            0,
+            "{} is not a junction",
+            link.display()
+        );
         assert!(link.join("package.json").is_file());
     }
     assert!(f.root.join("home/.tnpm/cache/files-v1").is_dir());
-    f.ok(&["ci", "--node-linker=isolated", "--ignore-scripts", "--offline"]);
-    assert!(f.root.join("node_modules/app/node_modules/sub/package.json").is_file());
+    f.ok(&[
+        "ci",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert!(
+        f.root
+            .join("node_modules/app/node_modules/sub/package.json")
+            .is_file()
+    );
 }
