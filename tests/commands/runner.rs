@@ -100,3 +100,115 @@ fn reports_invalid_typescript() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("broken.ts"));
 }
+
+#[test]
+fn commonjs_preserves_live_bindings_and_default_interop() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file(
+        "dep.cts",
+        r#"export default 40;
+export let counter = 0;
+export function bump() { counter++; }"#,
+    );
+    f.file(
+        "entry.cts",
+        r#"import value, { counter, bump } from "./dep.cts";
+import * as namespace from "./dep.cts";
+bump();
+console.log(JSON.stringify([value, counter, namespace.counter]));"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "[40,1,1]\n");
+}
+
+#[test]
+fn commonjs_shorthand_and_callee_imports_keep_esm_semantics() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file(
+        "dep.cts",
+        r#"export let value = 1;
+export function setValue(next: number) { value = next; }
+export function receiver() { return typeof this; }"#,
+    );
+    f.file(
+        "entry.cts",
+        r#"import { value, setValue, receiver } from "./dep.cts";
+const snapshot = { value };
+setValue(2);
+console.log(JSON.stringify([snapshot.value, value, receiver()]));"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "[1,2,\"undefined\"]\n");
+}
+
+#[test]
+fn commonjs_supports_reexports_namespaces_and_default_declarations() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file(
+        "dep.cts",
+        r#"export const value = 1;
+export default function named() { return 2; }"#,
+    );
+    f.file(
+        "mid.cts",
+        r#"export * from "./dep.cts";
+export { default as named } from "./dep.cts";
+export * as dependency from "./dep.cts";"#,
+    );
+    f.file(
+        "entry.cts",
+        r#"import { value, named, dependency } from "./mid.cts";
+console.log(JSON.stringify([value, named(), dependency.value, dependency.default()]));"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "[1,2,1,2]\n");
+}
+
+#[test]
+fn commonjs_local_exports_win_over_star_exports() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file("dep.cts", r#"export const shared = "dep";"#);
+    f.file(
+        "mid.cts",
+        r#"export * from "./dep.cts";
+export const shared = "local";"#,
+    );
+    f.file(
+        "entry.cts",
+        r#"import { shared } from "./mid.cts";
+console.log(shared);"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "local\n");
+}
+
+#[test]
+fn commonjs_supports_anonymous_default_function_and_class() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file("fn.cts", "export default function () { return 3; }");
+    f.file(
+        "class.cts",
+        "export default class { constructor() { this.value = 5; } }",
+    );
+    f.file(
+        "entry.cts",
+        r#"import make from "./fn.cts";
+import Value from "./class.cts";
+console.log(make() + new Value().value);"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "8\n");
+}
+
+#[test]
+fn commonjs_typescript_export_assignment_round_trips() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file("value.cts", "const value: number = 42; export = value;");
+    f.file(
+        "entry.cts",
+        r#"import value = require("./value.cts");
+console.log(value);"#,
+    );
+    assert_eq!(f.ok(&["run", "entry.cts"]), "42\n");
+}

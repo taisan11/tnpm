@@ -42,7 +42,7 @@ runner/mod.rs + loader.mjs
     │
     ├─ Node 標準解決を優先
     ├─ runner/oxc.rs: import 解析・TS/JSX 変換・解決
-    ├─ runner/commonjs.rs: SWC による CommonJS module 変換
+    ├─ runner/commonjs.rs: Oxc の AST を使った CommonJS module 変換
     └─ runner/remote.rs: HTTP(S), jsr:, npm: の取得・キャッシュ
     │
     ▼

@@ -1,194 +1,134 @@
 //! SemVer parsing, ordering, release increments, and npm-compatible ranges.
+//!
+//! Version parsing and ordering are delegated to the [`semver`] crate. npm's
+//! range grammar differs from Cargo's (`1.2` means `1.2.x`, spaces combine
+//! comparators, `||` unions ranges, and hyphens are inclusive), so ranges are
+//! translated to `semver::VersionReq` comparator groups before evaluation.
 use anyhow::{Context, Result, bail};
+use semver::{BuildMetadata, Prerelease, Version as SemverVersion, VersionReq};
 use std::cmp::Ordering;
+use std::fmt;
+use std::fmt::Write as _;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Version {
-    major: u64,
-    minor: u64,
-    patch: u64,
-    pre: Vec<String>,
-    build: Option<String>,
-}
-
-fn identifiers(value: &str, prerelease: bool) -> bool {
-    !value.is_empty()
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
-                && (!prerelease
-                    || !part.bytes().all(|c| c.is_ascii_digit())
-                    || part.len() == 1
-                    || !part.starts_with('0'))
-        })
-}
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Version(SemverVersion);
 
 impl Version {
     pub fn parse(value: &str) -> Option<Self> {
         let value = value.strip_prefix('v').unwrap_or(value);
-        let (value, build) = match value.split_once('+') {
-            Some((value, build)) if identifiers(build, false) => (value, Some(build.into())),
-            Some(_) => return None,
-            None => (value, None),
-        };
-        let (value, pre) = match value.split_once('-') {
-            Some((value, pre)) if identifiers(pre, true) => {
-                (value, pre.split('.').map(str::to_owned).collect())
-            }
-            Some(_) => return None,
-            None => (value, Vec::new()),
-        };
-        let numbers: Vec<_> = value.split('.').collect();
-        if numbers.len() != 3
-            || numbers.iter().any(|p| {
-                p.is_empty()
-                    || !p.bytes().all(|c| c.is_ascii_digit())
-                    || (p.len() > 1 && p.starts_with('0'))
-            })
-        {
-            return None;
-        }
-        Some(Self {
-            major: numbers[0].parse().ok()?,
-            minor: numbers[1].parse().ok()?,
-            patch: numbers[2].parse().ok()?,
-            pre,
-            build,
-        })
-    }
-
-    fn core(&self) -> (u64, u64, u64) {
-        (self.major, self.minor, self.patch)
+        SemverVersion::parse(value).ok().map(Self)
     }
 
     pub fn compare(&self, other: &Self) -> Ordering {
-        let core = self.core().cmp(&other.core());
-        if core != Ordering::Equal {
-            return core;
-        }
-        if self.pre.is_empty() != other.pre.is_empty() {
-            return if self.pre.is_empty() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            };
-        }
-        for (a, b) in self.pre.iter().zip(&other.pre) {
-            let an = a.bytes().all(|c| c.is_ascii_digit());
-            let bn = b.bytes().all(|c| c.is_ascii_digit());
-            let order = match (an, bn) {
-                (true, true) => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
-                (true, false) => Ordering::Less,
-                (false, true) => Ordering::Greater,
-                _ => a.cmp(b),
-            };
-            if order != Ordering::Equal {
-                return order;
-            }
-        }
-        self.pre.len().cmp(&other.pre.len())
+        self.0.cmp(&other.0)
     }
 
     pub fn bump(&self, release: &str, preid: &str) -> Result<Self> {
         if let Some(version) = Self::parse(release) {
             return Ok(version);
         }
-        if !preid.is_empty() && !identifiers(preid, true) {
+        if !preid.is_empty() && Prerelease::new(preid).is_err() {
             bail!("invalid --preid");
         }
-        let mut v = self.clone();
-        v.build = None;
+        let mut version = self.0.clone();
+        version.build = BuildMetadata::EMPTY;
         let inc = |n: u64| n.checked_add(1).context("version number overflow");
         match release {
             "major" => {
-                if v.minor != 0 || v.patch != 0 || v.pre.is_empty() {
-                    v.major = inc(v.major)?;
+                if version.minor != 0 || version.patch != 0 || version.pre.is_empty() {
+                    version.major = inc(version.major)?;
                 }
-                v.minor = 0;
-                v.patch = 0;
-                v.pre.clear();
+                version.minor = 0;
+                version.patch = 0;
+                version.pre = Prerelease::EMPTY;
             }
             "minor" => {
-                if v.patch != 0 || v.pre.is_empty() {
-                    v.minor = inc(v.minor)?;
+                if version.patch != 0 || version.pre.is_empty() {
+                    version.minor = inc(version.minor)?;
                 }
-                v.patch = 0;
-                v.pre.clear();
+                version.patch = 0;
+                version.pre = Prerelease::EMPTY;
             }
             "patch" => {
-                if v.pre.is_empty() {
-                    v.patch = inc(v.patch)?;
+                if version.pre.is_empty() {
+                    version.patch = inc(version.patch)?;
                 }
-                v.pre.clear();
+                version.pre = Prerelease::EMPTY;
             }
             "premajor" => {
-                v.major = inc(v.major)?;
-                v.minor = 0;
-                v.patch = 0;
-                v.pre.clear();
+                version.major = inc(version.major)?;
+                version.minor = 0;
+                version.patch = 0;
+                version.pre = Prerelease::EMPTY;
             }
             "preminor" => {
-                v.minor = inc(v.minor)?;
-                v.patch = 0;
-                v.pre.clear();
+                version.minor = inc(version.minor)?;
+                version.patch = 0;
+                version.pre = Prerelease::EMPTY;
             }
             "prepatch" => {
-                v.patch = inc(v.patch)?;
-                v.pre.clear();
+                version.patch = inc(version.patch)?;
+                version.pre = Prerelease::EMPTY;
             }
             "prerelease" => {
-                if v.pre.is_empty() {
-                    v.patch = inc(v.patch)?;
+                if version.pre.is_empty() {
+                    version.patch = inc(version.patch)?;
                 }
             }
             _ => bail!("invalid version or release type: {release}"),
         }
         if release.starts_with("pre") {
-            let prefix: Vec<String> = if preid.is_empty() {
+            let mut identifiers: Vec<String> = if version.pre.is_empty() {
                 Vec::new()
             } else {
-                preid.split('.').map(str::to_owned).collect()
+                version.pre.as_str().split('.').map(str::to_owned).collect()
             };
-            if !prefix.is_empty() && (!v.pre.starts_with(&prefix) || v.pre.len() == prefix.len()) {
-                v.pre = prefix;
-                v.pre.push("0".into());
-            } else if let Some(index) = v
-                .pre
-                .iter()
-                .rposition(|p| p.bytes().all(|c| c.is_ascii_digit()))
-            {
-                let old: u64 = v.pre[index].parse().context("prerelease number overflow")?;
-                v.pre[index] = inc(old)?.to_string();
-            } else {
-                v.pre.push("0".into());
+            if !preid.is_empty() {
+                let prefix: Vec<&str> = preid.split('.').collect();
+                let matches_prefix = identifiers.len() > prefix.len()
+                    && identifiers
+                        .iter()
+                        .map(String::as_str)
+                        .zip(&prefix)
+                        .all(|(a, b)| a == *b);
+                if !matches_prefix {
+                    identifiers = prefix.into_iter().map(str::to_owned).collect();
+                    identifiers.push("0".into());
+                    version.pre =
+                        Prerelease::new(&identifiers.join(".")).context("invalid --preid")?;
+                    return Ok(Self(version));
+                }
             }
+            if let Some(index) = identifiers
+                .iter()
+                .rposition(|part| part.bytes().all(|b| b.is_ascii_digit()))
+            {
+                let old: u64 = identifiers[index]
+                    .parse()
+                    .context("prerelease number overflow")?;
+                identifiers[index] = inc(old)?.to_string();
+            } else {
+                identifiers.push("0".into());
+            }
+            version.pre = Prerelease::new(&identifiers.join(".")).context("invalid --preid")?;
         }
-        Ok(v)
+        Ok(Self(version))
     }
 }
 
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
-        if !self.pre.is_empty() {
-            write!(f, "-{}", self.pre.join("."))?;
-        }
-        if let Some(build) = &self.build {
-            write!(f, "+{build}")?;
-        }
-        Ok(())
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
-// npm's common range syntax, without introducing a second parser dependency.
-// Non-registry specs (file:, git URLs, aliases, tags) return None.
+/// Evaluate a registry version against npm's range syntax.
+///
+/// Non-registry specs (file:, git URLs, aliases, tags) return `None`.
 pub fn satisfies(version: &str, range: &str) -> Option<bool> {
-    let version = Version::parse(version)?;
-    let mut result = false;
-    for group in range.split("||") {
-        result |= satisfies_group(&version, group.trim())?;
-    }
-    Some(result)
+    let version = parse_version(version)?;
+    let requests = parse_range(range)?;
+    Some(requests.iter().any(|request| request.matches(&version)))
 }
 
 /// Ranges are unions of comparator intervals. An inhabited intersection has a
@@ -196,23 +136,25 @@ pub fn satisfies(version: &str, range: &str) -> Option<bool> {
 pub fn intersects(left: &str, right: &str) -> Option<bool> {
     satisfies("0.0.0", left)?;
     satisfies("0.0.0", right)?;
-    let mut candidates = vec![Version::parse("0.0.0")?];
+    let mut candidates = vec![SemverVersion::new(0, 0, 0)];
     for range in [left, right] {
         for text in range.split_whitespace().filter(|s| *s != "||" && *s != "-") {
             let text = text.trim_start_matches(['>', '<', '=', '^', '~']);
             if text.is_empty() {
                 continue;
             }
-            let Some((base, count)) = partial(text) else {
+            let Some((base, count)) = partial_base(text) else {
                 continue;
             };
             candidates.push(base.clone());
             if !base.pre.is_empty() {
                 let mut next = base.clone();
-                next.pre.push("0".into());
+                next.pre = Prerelease::new(&format!("{}.0", base.pre))
+                    .context("prerelease is invalid")
+                    .ok()?;
                 candidates.push(next);
                 let mut stable = base.clone();
-                stable.pre.clear();
+                stable.pre = Prerelease::EMPTY;
                 candidates.push(stable);
             }
             if count < 3 {
@@ -222,7 +164,7 @@ pub fn intersects(left: &str, right: &str) -> Option<bool> {
             } else if let Some(patch) = base.patch.checked_add(1) {
                 let mut next = base;
                 next.patch = patch;
-                next.pre.clear();
+                next.pre = Prerelease::EMPTY;
                 candidates.push(next);
             }
         }
@@ -233,12 +175,122 @@ pub fn intersects(left: &str, right: &str) -> Option<bool> {
     }))
 }
 
-fn partial(value: &str) -> Option<(Version, usize)> {
-    if let Some(version) = Version::parse(value) {
+fn parse_version(value: &str) -> Option<SemverVersion> {
+    let value = value.strip_prefix('v').unwrap_or(value);
+    SemverVersion::parse(value).ok()
+}
+
+fn parse_range(range: &str) -> Option<Vec<VersionReq>> {
+    let range = range.trim();
+    if range.is_empty() {
+        return Some(vec![VersionReq::STAR]);
+    }
+    range
+        .split("||")
+        .map(|group| parse_group(group.trim()))
+        .collect()
+}
+
+fn parse_group(group: &str) -> Option<VersionReq> {
+    if group.is_empty() {
+        return Some(VersionReq::STAR);
+    }
+    let tokens: Vec<&str> = group.split_whitespace().collect();
+    let mut comparators = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if index + 2 < tokens.len() && tokens[index + 1] == "-" {
+            let (low, low_count) = partial(tokens[index])?;
+            let (high, high_count) = partial(tokens[index + 2])?;
+            if low_count > 0 {
+                comparators.push(format!(">={}", partial_version(&low, low_count)?));
+            }
+            if high_count > 0 {
+                if high_count == 3 {
+                    comparators.push(format!("<={}", partial_version(&high, high_count)?));
+                } else {
+                    comparators.push(format!("<{}", upper(high, high_count)?));
+                }
+            }
+            index += 3;
+            continue;
+        }
+        let (operator, text, used_next) = split_operator(tokens[index], tokens.get(index + 1))?;
+        let (version, count) = partial(text)?;
+        comparators.extend(expand(operator, &version, count)?);
+        index += if used_next { 2 } else { 1 };
+    }
+    let text = comparators.join(", ");
+    if text.is_empty() {
+        return Some(VersionReq::STAR);
+    }
+    VersionReq::parse(&text).ok()
+}
+
+fn split_operator<'a>(token: &'a str, next: Option<&&'a str>) -> Option<(&'a str, &'a str, bool)> {
+    for operator in [">=", "<=", ">", "<", "^", "~>", "~", "="] {
+        if let Some(rest) = token.strip_prefix(operator) {
+            let operator = if operator == "~>" { "~" } else { operator };
+            if rest.is_empty() {
+                return Some((operator, next.copied()?, true));
+            }
+            return Some((operator, rest, false));
+        }
+    }
+    Some(("", token, false))
+}
+
+fn expand(operator: &str, version: &SemverVersion, count: usize) -> Option<Vec<String>> {
+    if count == 0 {
+        return Some(match operator {
+            ">" | "<" => vec!["<0.0.0-0".into()],
+            _ => Vec::new(),
+        });
+    }
+    let lower = partial_version(version, count)?;
+    let upper = upper(version.clone(), count);
+    Some(match operator {
+        "^" | "~" => vec![format!("{operator}{}", partial_shorthand(version, count)?)],
+        ">" => {
+            if count == 3 {
+                vec![format!(">{lower}")]
+            } else {
+                vec![format!(">={}", upper?)]
+            }
+        }
+        ">=" => vec![format!(">={lower}")],
+        "<" => {
+            if count == 3 {
+                vec![format!("<{lower}")]
+            } else {
+                vec![format!("<{lower}-0")]
+            }
+        }
+        "<=" => {
+            if count == 3 {
+                vec![format!("<={lower}")]
+            } else {
+                vec![format!("<{}", upper_marker(version.clone(), count)?)]
+            }
+        }
+        "=" | "" => {
+            if count == 3 {
+                vec![format!("={lower}")]
+            } else {
+                vec![format!(">={lower}"), format!("<{}", upper?)]
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn partial(value: &str) -> Option<(SemverVersion, usize)> {
+    let value = value.strip_prefix('v').unwrap_or(value);
+    let value = value.split('+').next()?;
+    if let Ok(version) = SemverVersion::parse(value) {
         return Some((version, 3));
     }
-    let value = value.strip_prefix('v').unwrap_or(value);
-    let parts: Vec<_> = value.split('.').collect();
+    let parts: Vec<&str> = value.split('.').collect();
     if parts.len() > 3 {
         return None;
     }
@@ -260,18 +312,43 @@ fn partial(value: &str) -> Option<(Version, usize)> {
         count += 1;
     }
     Some((
-        Version {
-            major: numbers[0],
-            minor: numbers[1],
-            patch: numbers[2],
-            pre: Vec::new(),
-            build: None,
-        },
+        SemverVersion::new(numbers[0], numbers[1], numbers[2]),
         count,
     ))
 }
 
-fn upper(mut version: Version, count: usize) -> Option<Version> {
+fn partial_base(value: &str) -> Option<(SemverVersion, usize)> {
+    partial(value)
+}
+
+/// Render only the components present in a partial range (`~1.2`, not `~1.2.0`).
+fn partial_shorthand(version: &SemverVersion, count: usize) -> Option<String> {
+    if count == 0 {
+        return None;
+    }
+    let mut output = version.major.to_string();
+    if count >= 2 {
+        let _ = write!(output, ".{}", version.minor);
+    }
+    if count >= 3 {
+        let _ = write!(output, ".{}", version.patch);
+        if !version.pre.is_empty() {
+            let _ = write!(output, "-{}", version.pre);
+        }
+    }
+    Some(output)
+}
+
+fn partial_version(version: &SemverVersion, count: usize) -> Option<String> {
+    let mut version = version.clone();
+    version.build = BuildMetadata::EMPTY;
+    if count < 3 {
+        version.pre = Prerelease::EMPTY;
+    }
+    Some(version.to_string())
+}
+
+fn upper(mut version: SemverVersion, count: usize) -> Option<SemverVersion> {
     match count {
         0 => return None,
         1 => {
@@ -284,106 +361,16 @@ fn upper(mut version: Version, count: usize) -> Option<Version> {
             version.patch = 0;
         }
     }
-    version.pre.clear();
-    version.build = None;
+    version.pre = Prerelease::EMPTY;
+    version.build = BuildMetadata::EMPTY;
     Some(version)
 }
 
-fn satisfies_group(version: &Version, group: &str) -> Option<bool> {
-    if let Some((low, high)) = group.split_once(" - ") {
-        let (low, _) = partial(low.trim())?;
-        let (high, count) = partial(high.trim())?;
-        let high_ok = if count == 3 {
-            version.compare(&high) != Ordering::Greater
-        } else if count == 0 {
-            true
-        } else {
-            version.compare(&upper(high.clone(), count)?) == Ordering::Less
-        };
-        return Some(
-            version.compare(&low) != Ordering::Less
-                && high_ok
-                && (version.pre.is_empty()
-                    || (!low.pre.is_empty() && low.core() == version.core())
-                    || (!high.pre.is_empty() && high.core() == version.core())),
-        );
-    }
-    let tokens: Vec<_> = group.split_whitespace().collect();
-    let mut result = true;
-    let mut pre_allowed = version.pre.is_empty();
-    let mut index = 0;
-    while index < tokens.len() {
-        let token = tokens[index];
-        let (op, mut text) = [">=", "<=", ">", "<", "^", "~", "="]
-            .into_iter()
-            .find_map(|op| token.strip_prefix(op).map(|rest| (op, rest)))
-            .unwrap_or(("", token));
-        if text.is_empty() && !op.is_empty() {
-            index += 1;
-            text = *tokens.get(index)?;
-        }
-        let (low, count) = partial(text)?;
-        pre_allowed |= !low.pre.is_empty() && low.core() == version.core();
-        let order = version.compare(&low);
-        result &= match op {
-            "^" | "~" => {
-                let limit = if count == 0 {
-                    None
-                } else if op == "~" {
-                    upper(low.clone(), count.min(2))
-                } else {
-                    let position = if low.major > 0 || count == 1 {
-                        1
-                    } else if low.minor > 0 || count == 2 {
-                        2
-                    } else {
-                        3
-                    };
-                    if position == 3 {
-                        let mut limit = low.clone();
-                        limit.patch = limit.patch.checked_add(1)?;
-                        limit.pre.clear();
-                        Some(limit)
-                    } else {
-                        upper(low.clone(), position)
-                    }
-                };
-                order != Ordering::Less
-                    && limit.is_none_or(|limit| version.compare(&limit) == Ordering::Less)
-            }
-            ">=" => count == 0 || order != Ordering::Less,
-            ">" => {
-                if count == 0 {
-                    false
-                } else if count < 3 {
-                    version.compare(&upper(low, count)?) != Ordering::Less
-                } else {
-                    order == Ordering::Greater
-                }
-            }
-            "<=" => {
-                if count == 0 {
-                    true
-                } else if count < 3 {
-                    version.compare(&upper(low, count)?) == Ordering::Less
-                } else {
-                    order != Ordering::Greater
-                }
-            }
-            "<" => count != 0 && order == Ordering::Less,
-            _ => {
-                count == 0
-                    || (order != Ordering::Less
-                        && if count < 3 {
-                            version.compare(&upper(low, count)?) == Ordering::Less
-                        } else {
-                            order == Ordering::Equal
-                        })
-            }
-        };
-        index += 1;
-    }
-    Some(result && pre_allowed)
+/// npm excludes prereleases at a partial upper bound (`<2.0.0-0`).
+fn upper_marker(version: SemverVersion, count: usize) -> Option<String> {
+    let mut upper = upper(version, count)?;
+    upper.pre = Prerelease::new("0").ok()?;
+    Some(upper.to_string())
 }
 
 #[cfg(test)]
@@ -465,6 +452,13 @@ mod tests {
             ("0.0.4", "^0.0.3", false),
             ("1.2.9", "~1.2.3", true),
             ("1.3.0", "~1.2.3", false),
+            ("1.9.9", "~1", true),
+            ("2.0.0", "~1", false),
+            ("1.9.9", "~1.x", true),
+            ("0.9.9", "^0", true),
+            ("1.0.0", "^0", false),
+            ("1.2.3", "~>1.2.3", true),
+            ("1.3.0", "~>1.2.3", false),
             ("2.0.0", ">=1 <3", true),
             ("1.9.0", "1.x", true),
             ("2.0.0", "1.x", false),
@@ -472,9 +466,51 @@ mod tests {
             ("2.9.0", "1.2 - 2", true),
             ("1.2.3-beta.1", "*", false),
             ("1.2.3-beta.2", ">=1.2.3-beta.1 <2", true),
+            ("1.2.3", "1.2.3", true),
+            ("1.2.4", "1.2.3", false),
+            ("1.2.9", "=1.2", true),
+            ("1.3.0", "=1.2", false),
+            ("1.9.9", "1", true),
+            ("2.0.0", "1", false),
+            ("2.0.0", ">1", true),
+            ("1.9.9", ">1", false),
+            ("0.9.9", "<1", true),
+            ("1.0.0", "<1", false),
+            ("1.0.0-alpha", "<1", false),
+            ("1.1.9", "<1.2", true),
+            ("1.2.0", "<1.2", false),
+            ("1.2.0-alpha", "<1.2", false),
+            ("1.2.9", "<=1.2", true),
+            ("1.3.0", "<=1.2", false),
+            ("1.3.0-alpha", "<=1.2", false),
+            ("1.2.3", "v1.2.3", true),
+            ("1.2.3", "1.2.3+build", true),
+            ("1.2.4", ">=1.2.3+build", true),
+            ("2.4.0", "1.2.3 - 2.3", false),
+            ("2.3.9", "1.2.3 - 2.3", true),
+            ("3.0.0-alpha", "1.2.3 - 2", false),
+            ("1.2.0", "1.2.x", true),
+            ("1.3.0-alpha", "1.2.x", false),
+            ("2.0.0", "^*", true),
+            ("1.0.0-0", "*", false),
+            ("1.0.0", ">=*", true),
+            ("1.0.0-0", ">=*", false),
+            ("1.0.0", "<=*", true),
+            ("1.0.0-0", "<=*", false),
+            ("1.2.3", "1.2.3 - 2.3.4", true),
+            ("2.3.4", "1.2.3 - 2.3.4", true),
+            ("2.3.5", "1.2.3 - 2.3.4", false),
+            ("1.2.3-beta.1", "^1.2.3-beta.0", true),
+            ("1.2.4-beta.1", "^1.2.3-beta.0", false),
         ] {
             assert_eq!(satisfies(v, range), Some(expected), "{v} {range}");
         }
-        assert_eq!(satisfies("1.0.0", "file:../x"), None);
+        for range in ["file:../x", "latest", "1.2.3 || latest", "1.2.3-"] {
+            assert_eq!(satisfies("1.0.0", range), None, "{range}");
+        }
+        assert_eq!(satisfies("1.0.0", ""), Some(true));
+        assert_eq!(satisfies("1.0.0", "  "), Some(true));
+        assert_eq!(satisfies("1.0.0", "*"), Some(true));
+        assert_eq!(satisfies("1.0.0", "x"), Some(true));
     }
 }
