@@ -30,7 +30,7 @@ pub const DEP_FIELDS: &[&str] = &[
     "peerDependencies",
 ];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Dependency {
     pub name: String,
     pub spec: String,
@@ -348,56 +348,22 @@ impl Lockfile {
         }
     }
 
-    pub fn peer_conflicts(&self, policy: PeerPolicy) -> Vec<String> {
+    pub fn peer_issues(&self, policy: PeerPolicy) -> (Vec<String>, Vec<String>) {
         if policy.legacy {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
-        let mut errors = Vec::new();
-        for (from, data) in &self.packages {
-            for dep in dependencies(data, from.is_empty())
-                .into_iter()
-                .filter(|d| d.peer)
-            {
-                let path = self.resolve_dependency(from, &dep);
-                let found = path.as_ref().map(|p| &self.packages[p]);
-                let nested =
-                    !from.is_empty() && self.packages.contains_key(&child(from, &dep.name));
-                let invalid = nested
-                    || found
-                        .is_some_and(|v| spec::satisfies(&dep.name, &dep.spec, v) == Some(false));
-                if (invalid || (found.is_none() && !dep.optional))
-                    && (!policy.allows_mismatch() || found.is_none() || nested)
-                {
-                    errors.push(peer_error(from, &dep, found));
-                }
-            }
-        }
-        errors
+        let manifest = self.packages.get("").unwrap_or(&Value::Null);
+        graph::Graph::new(self, manifest).peer_issues(policy)
     }
 
     pub fn peer_warnings(&self, policy: PeerPolicy) -> Vec<String> {
         if policy.legacy || !policy.allows_mismatch() {
             return Vec::new();
         }
-        self.packages
-            .iter()
-            .flat_map(|(from, data)| {
-                dependencies(data, from.is_empty())
-                    .into_iter()
-                    .filter_map(move |dep| {
-                        if !dep.peer {
-                            return None;
-                        }
-                        let path = self.resolve_dependency(from, &dep)?;
-                        let entry = &self.packages[&path];
-                        (spec::satisfies(&dep.name, &dep.spec, entry) == Some(false))
-                            .then(|| peer_error(from, &dep, Some(entry)))
-                    })
-            })
-            .collect()
+        self.peer_issues(policy).1
     }
 
-    pub fn validate_with(&self, manifest: &Value, policy: PeerPolicy) -> Result<()> {
+    pub fn validate_root(&self, manifest: &Value) -> Result<()> {
         let locked = self
             .packages
             .get("")
@@ -421,6 +387,11 @@ impl Lockfile {
                 bail!("package.json and lockfile disagree on {field}; run install first");
             }
         }
+        Ok(())
+    }
+
+    pub fn validate_with(&self, manifest: &Value, policy: PeerPolicy) -> Result<()> {
+        self.validate_root(manifest)?;
         self.reachable_with(manifest, true, policy)?;
         Ok(())
     }
@@ -440,16 +411,60 @@ impl Lockfile {
         strict: bool,
         policy: PeerPolicy,
     ) -> Result<BTreeSet<String>> {
-        if strict && let Some(error) = self.peer_conflicts(policy).first() {
-            bail!("{error}");
+        let graph = graph::Graph::new(self, manifest);
+        if strict {
+            let (conflicts, _) = graph.peer_issues(policy);
+            if let Some(error) = conflicts.first() {
+                bail!("{error}");
+            }
         }
-        graph::Graph::new(self, manifest).reachable(strict, policy)
+        graph.reachable(strict, policy)
     }
 
     pub fn classify_with(&mut self, manifest: &Value, policy: PeerPolicy) {
         // A shared production dependency is not dev-only. Graph snapshots borrow
         // JSON only until traversal finishes; mutation cannot invalidate edges.
         let flags = graph::Graph::new(self, manifest).classify(policy);
+        self.apply_flags(flags);
+    }
+
+    /// Validate and classify a lockfile that is about to be reused. Builds the
+    /// indexed graph once instead of once per analysis pass.
+    pub fn reuse(&mut self, manifest: &Value, policy: PeerPolicy) -> Result<BTreeSet<String>> {
+        let (used, flags) = {
+            let graph = graph::Graph::new(self, manifest);
+            let (conflicts, _) = graph.peer_issues(policy);
+            if let Some(error) = conflicts.first() {
+                bail!("{error}");
+            }
+            let used = graph.reachable(true, policy)?;
+            (used, graph.classify(policy))
+        };
+        self.apply_flags(flags);
+        Ok(used)
+    }
+
+    /// Classify and validate a freshly resolved graph with one index build.
+    /// Returns `false` when strict peer conflicts require the joint resolver.
+    pub fn finalize(&mut self, manifest: &Value, policy: PeerPolicy) -> Result<bool> {
+        let strict = PeerPolicy {
+            strict: true,
+            force: false,
+            ..policy
+        };
+        let flags = {
+            let graph = graph::Graph::new(self, manifest);
+            if !graph.peer_issues(strict).0.is_empty() {
+                return Ok(false);
+            }
+            graph.reachable(true, policy)?;
+            graph.classify(policy)
+        };
+        self.apply_flags(flags);
+        Ok(true)
+    }
+
+    fn apply_flags(&mut self, flags: Vec<Option<u8>>) {
         let mut flags = flags.into_iter();
         if !self.packages.contains_key("") {
             flags.next(); // The indexed graph always has a synthetic root.

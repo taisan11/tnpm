@@ -27,6 +27,14 @@ pub struct Cache {
     directory: PathBuf,
 }
 
+impl Clone for Cache {
+    fn clone(&self) -> Self {
+        Self {
+            directory: self.directory.clone(),
+        }
+    }
+}
+
 impl Cache {
     pub fn home() -> Option<Self> {
         dirs::home_dir().map(|home| Self {
@@ -64,9 +72,16 @@ impl Cache {
         self.write(key, &encode(key, value, policy)?)
     }
 
-    pub fn refresh(&self, key: &str, document: &Document, policy: &Policy) -> io::Result<()> {
+    /// Write an already encoded document, avoiding a second encode on the
+    /// network path where the same bytes are reused for in-memory resolution.
+    pub fn store_bytes(&self, key: &str, bytes: &[u8]) -> io::Result<()> {
+        self.write(key, bytes)
+    }
+
+    pub fn refresh(&self, key: &str, document: &Document, policy: &Policy) -> io::Result<Vec<u8>> {
         if !policy.can_store() {
-            return self.remove(key);
+            self.remove(key)?;
+            return Ok(Vec::new());
         }
         // Preserve the indexed body verbatim: 304 must not decode/re-encode all versions.
         let mut writer = Encoder::new(document.bytes[..document.layout.http].to_vec());
@@ -79,7 +94,10 @@ impl Cache {
             ..document.layout.clone()
         };
         finish(&mut writer, key.len(), &layout, policy)?;
-        self.write(key, &writer.bytes)
+        self.write(key, &writer.bytes)?;
+        // Hand the refreshed bytes back so the in-process document cache can
+        // adopt the new policy instead of revalidating again for every query.
+        Ok(writer.bytes)
     }
 
     pub fn remove(&self, key: &str) -> io::Result<()> {
@@ -100,19 +118,27 @@ impl Cache {
             builder.mode(0o700);
         }
         builder.create(directory)?;
-        let temporary = directory.join(format!(
-            ".{}-{}.tmp",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
+        // A stale temporary file from a crashed process can share the reused
+        // PID and counter; advance until an unused name is found.
+        let (temporary, mut file) = loop {
+            let candidate = directory.join(format!(
+                ".{}-{}.tmp",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&candidate) {
+                Ok(file) => break (candidate, file),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        };
         let result = (|| {
             file.write_all(bytes)?;
             drop(file);
@@ -145,7 +171,7 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid registry cache")
 }
 
-fn encode(key: &str, value: &Value, policy: &Policy) -> io::Result<Vec<u8>> {
+pub(super) fn encode(key: &str, value: &Value, policy: &Policy) -> io::Result<Vec<u8>> {
     let mut writer = Encoder::new(vec![0; HEADER]);
     writer.bytes.extend_from_slice(key.as_bytes());
     let root = writer.node(value, 0)?;
@@ -274,10 +300,9 @@ impl<'a> Encoder<'a> {
             .map(|(i, (name, _))| (i, name.as_str(), Version::parse(name)))
             .collect();
         let all_valid = sorted.iter().all(|(_, _, version)| version.is_some());
-        sorted.sort_by_key(|(_, name, _)| *name);
-        sorted.sort_by(|(_, _, a), (_, _, b)| match (a, b) {
-            (Some(a), Some(b)) => a.compare(b),
-            _ => std::cmp::Ordering::Equal,
+        sorted.sort_by(|(_, a_name, a), (_, b_name, b)| match (a, b) {
+            (Some(a), Some(b)) => a.compare(b).then_with(|| a_name.cmp(b_name)),
+            _ => a_name.cmp(b_name),
         });
         let mut first = FxHashMap::with_capacity_and_hasher(sorted.len(), Default::default());
         for (index, (name, _)) in versions.members().iter().enumerate() {
@@ -360,7 +385,7 @@ pub struct Document {
 }
 
 impl Document {
-    fn open(bytes: Vec<u8>, key: &str) -> io::Result<Option<Self>> {
+    pub(super) fn open(bytes: Vec<u8>, key: &str) -> io::Result<Option<Self>> {
         if bytes.len() < HEADER || bytes.len() > MAX_SIZE || &bytes[..8] != MAGIC {
             return Err(invalid());
         }
@@ -443,6 +468,14 @@ impl Document {
         self.policy
             .as_ref()
             .expect("cache policy was validated while opening the document")
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     pub fn root(&self) -> Node<'_> {

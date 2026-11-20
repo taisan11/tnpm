@@ -165,6 +165,10 @@ impl Config {
         let https = url.scheme() == "https";
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
+            .connect_timeout(Duration::from_secs(10))
+            .pool_max_idle_per_host(16)
+            .pool_idle_timeout(Duration::from_secs(30))
+            .user_agent(concat!("tnpm/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::custom(move |attempt| {
                 if no_redirect {
                     attempt.stop()

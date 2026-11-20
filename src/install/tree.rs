@@ -52,16 +52,15 @@ fn retain_reachable(
 }
 
 pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        return metadata.file_attributes() & 0x400 != 0;
+        metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
-    false
+    {
+        metadata.file_type().is_symlink()
+    }
 }
 
 pub(super) fn ensure_safe_parents(root: &Path, relative: &str) -> Result<()> {
@@ -316,8 +315,20 @@ fn link_bins(
     }
     for path in paths {
         let package = root.join(path);
-        let Some(data) = manifest::read(&package)? else {
-            continue;
+        let entry = lock.packages.get(path);
+        // Lock entries already carry `bin`; avoid re-reading and parsing every
+        // installed manifest just to relink executables.
+        let bins = match entry.and_then(|entry| entry.get("bin")) {
+            Some(bin) => scripts::bins_value(
+                Some(bin),
+                entry
+                    .and_then(|entry| entry.str("name"))
+                    .unwrap_or_else(|| lockfile::name_at(path)),
+            ),
+            None => match manifest::read(&package)? {
+                Some(data) => scripts::bins(&data),
+                None => continue,
+            },
         };
         let modules = if lockfile::name_at(path).starts_with('@') {
             package.parent().unwrap().parent().unwrap()
@@ -326,7 +337,8 @@ fn link_bins(
         };
         let dir = modules.join(".bin");
         fs::create_dir_all(&dir)?;
-        for (name, target) in scripts::bins(&data) {
+        let package_root = fs::canonicalize(&package)?;
+        for (name, target) in bins {
             if name.is_empty()
                 || name.contains(['/', '\\'])
                 || name == "."
@@ -340,7 +352,7 @@ fn link_bins(
                 continue;
             }
             let canonical = fs::canonicalize(&source)?;
-            if !canonical.starts_with(fs::canonicalize(&package)?) {
+            if !canonical.starts_with(&package_root) {
                 bail!("bin target escapes package");
             }
             #[cfg(unix)]
@@ -383,6 +395,12 @@ pub(super) async fn materialize(
     if was_isolated {
         // An isolated graph cannot be scanned or mutated as a hoisted tree.
         ensure_safe_parents(root, "node_modules")?;
+        // Validate lock-provided workspace links before destroying the tree.
+        for (path, entry) in &lock.packages {
+            if !path.is_empty() && flag(entry, "link") {
+                super::sources::workspace_target(ctx, entry)?;
+            }
+        }
         remove_path(&root.join("node_modules"))?;
     }
     let clean = clean || was_isolated;
@@ -491,7 +509,9 @@ pub(super) async fn materialize(
             .event("prepare", "all installed packages are reusable");
     }
     // Clone cached packages or download/decompress concurrently, then commit parent-first.
-    let stage = root.join(format!(".tnpm-stage-{}-{}", std::process::id(), unique()));
+    let stage =
+        root.join("node_modules")
+            .join(format!(".tnpm-stage-{}-{}", std::process::id(), unique()));
     if !jobs.is_empty() {
         fs::create_dir(&stage)?;
     }
@@ -630,7 +650,7 @@ pub(super) async fn materialize(
         if scripts_enabled {
             // Nested dependencies first; all binaries already exist before any lifecycle hook.
             let mut order: Vec<_> = selected.iter().cloned().collect();
-            order.sort_by_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
+            order.sort_by_cached_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
             for path in &order {
                 if !selected.contains(path) {
                     continue;
@@ -766,7 +786,7 @@ pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
         ensure_install_path(ctx, root, path, &installed)?;
     }
     let mut order: Vec<_> = selected.into_iter().collect();
-    order.sort_by_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
+    order.sort_by_cached_key(|p| std::cmp::Reverse(p.matches("node_modules/").count()));
     link_bins(ctx, root, &all, &installed)?;
     let enabled = !ctx.options.ignore_scripts && !ctx.config.enabled("ignore-scripts");
     let mut builds = build_state(root);

@@ -41,9 +41,9 @@ fn may_contain_match(pattern: &WorkspacePattern, dir: &str) -> bool {
         || prefix.starts_with(&format!("{dir}/"))
 }
 
-pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
+fn parse_patterns(data: &Value) -> Result<Option<Vec<WorkspacePattern>>> {
     let Some(patterns) = data.get("workspaces") else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     let patterns = patterns.get("packages").unwrap_or(patterns);
     let Value::Array(patterns) = patterns else {
@@ -75,6 +75,13 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    Ok(Some(patterns))
+}
+
+pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
+    let Some(patterns) = parse_patterns(data)? else {
+        return Ok(Vec::new());
+    };
     fn walk(
         root: &Path,
         relative: &str,
@@ -145,12 +152,35 @@ pub fn discover(root: &Path, data: &Value) -> Result<Vec<Workspace>> {
 
 pub fn root(start: &Path) -> Result<Option<PathBuf>> {
     for candidate in start.ancestors() {
-        if let Some(data) = manifest::read(candidate)?
-            && data.get("workspaces").is_some()
-            && discover(candidate, &data)?
-                .iter()
-                .any(|w| start.starts_with(candidate.join(&w.relative)))
-        {
+        let Some(data) = manifest::read(candidate)? else {
+            continue;
+        };
+        let Some(patterns) = parse_patterns(&data)? else {
+            continue;
+        };
+        let Ok(relative) = start.strip_prefix(candidate) else {
+            continue;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if relative.is_empty() {
+            continue;
+        }
+        // Match ancestors of the current directory against the patterns instead
+        // of walking the whole repository to discover every workspace.
+        let mut prefix = String::new();
+        let mut included = false;
+        for part in relative.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            if patterns.iter().any(|p| !p.include && matches(p, &prefix)) {
+                included = false;
+            } else if patterns.iter().any(|p| p.include && matches(p, &prefix)) {
+                included = true;
+            }
+        }
+        if included {
             return Ok(Some(candidate.to_owned()));
         }
     }

@@ -39,12 +39,18 @@ impl Config {
     pub fn load(root: &Path, options: &Options) -> Result<Self> {
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
+            .ok()
+            .filter(|home| !home.is_empty())
+            .or_else(|| dirs::home_dir().map(|home| home.to_string_lossy().into_owned()))
             .unwrap_or_default();
-        let env_values: BTreeMap<_, _> = env::vars()
+        // Non-Unicode environment entries are skipped rather than aborting the
+        // process: only ASCII `npm_config_*` keys are meaningful to tnpm.
+        let env_values: BTreeMap<_, _> = env::vars_os()
             .filter_map(|(key, value)| {
-                key.get(..11)
-                    .filter(|prefix| prefix.eq_ignore_ascii_case("npm_config_"))
-                    .map(|_| (env_key(&key[11..]), value))
+                let key = key.into_string().ok()?;
+                key.get(..11)?
+                    .eq_ignore_ascii_case("npm_config_")
+                    .then(|| (env_key(&key[11..]), value.to_string_lossy().into_owned()))
             })
             .collect();
         let mut prefix = env_values.get("prefix").cloned().unwrap_or_else(|| {
@@ -67,7 +73,7 @@ impl Config {
             values: BTreeMap::new(),
             arrays: BTreeMap::new(),
         };
-        user.read_npmrc(&PathBuf::from(&userconfig))?;
+        user.read_npmrc(&PathBuf::from(&userconfig), &home)?;
         if !env_values.contains_key("prefix")
             && let Some(value) = user.get("prefix")
         {
@@ -107,7 +113,7 @@ impl Config {
             PathBuf::from(userconfig),
             root.join(".npmrc"),
         ] {
-            config.read_npmrc(&path)?;
+            config.read_npmrc(&path, &home)?;
         }
         for (key, value) in env_values {
             let value = if path_key(&key) {
@@ -173,12 +179,14 @@ impl Config {
         self.values.insert(key, value);
     }
 
-    fn read_npmrc(&mut self, path: &Path) -> Result<()> {
+    fn read_npmrc(&mut self, path: &Path, home: &str) -> Result<()> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
         };
+        let mut array_keys = BTreeSet::new();
+        // The first `key[]` in each file replaces the array from earlier files.
         let mut arrays = BTreeSet::new();
         for line in text.trim_start_matches('\u{feff}').lines().map(str::trim) {
             if line.is_empty() || line.starts_with(['#', ';']) {
@@ -192,12 +200,7 @@ impl Config {
             }
             let value = expand_env(&ini_value(value));
             let value = if path_key(key.trim_end_matches("[]")) {
-                expand_path(
-                    &value,
-                    &env::var("HOME")
-                        .or_else(|_| env::var("USERPROFILE"))
-                        .unwrap_or_default(),
-                )
+                expand_path(&value, home)
             } else {
                 value
             };
@@ -205,12 +208,24 @@ impl Config {
                 if arrays.insert(key.to_owned()) {
                     self.arrays.insert(key.to_owned(), Vec::new());
                 }
-                let items = self.arrays.get_mut(key).expect("array initialized");
-                items.push(value);
-                self.values.insert(key.to_owned(), items.join(","));
+                array_keys.insert(key.to_owned());
+                self.arrays.entry(key.to_owned()).or_default().push(value);
             } else {
                 self.set(key.into(), value);
                 arrays.remove(key);
+            }
+        }
+        // Join repeated `key[]` entries once instead of rebuilding the string
+        // for every line, which is quadratic for large configurations.
+        for key in array_keys {
+            let joined = self
+                .arrays
+                .get(&key)
+                .filter(|items| !items.is_empty())
+                .map(|items| items.join(","));
+            // No array means a later non-array assignment already replaced the key.
+            if let Some(joined) = joined {
+                self.values.insert(key, joined);
             }
         }
         Ok(())

@@ -30,11 +30,17 @@ pub(super) async fn hydrate(ctx: &Context<'_>, mut data: Value) -> Result<Value>
         .as_deref()
         .and_then(|p| store::cached_package(p, entry.str("integrity")))
     {
-        store::clone_tree(&cached, &directory)?;
+        let destination = directory.clone();
+        tokio::task::spawn_blocking(move || store::clone_tree(&cached, &destination))
+            .await
+            .context("bundled package clone task failed")??;
     } else if !sources::prepare(ctx, &entry, &directory).await? {
         let bytes = store::tarball(ctx, &entry, name).await?;
         fs::create_dir(&directory)?;
-        store::unpack(&bytes, &directory)?;
+        let destination = directory.clone();
+        tokio::task::spawn_blocking(move || store::unpack(&bytes, &destination))
+            .await
+            .context("bundled package extract task failed")??;
         if let Some(cache) = cache {
             store::cache_extracted_package(&directory, &cache, entry.str("integrity"))?;
         }

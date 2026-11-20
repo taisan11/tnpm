@@ -188,17 +188,17 @@ pub(super) async fn run(ctx: &Context<'_>, root: &Path) -> Result<()> {
         for finding in findings {
             println!(
                 "{}: {} - {}\n  {}",
-                finding.str("severity").unwrap(),
-                finding.str("name").unwrap(),
-                finding.str("title").unwrap(),
-                finding.str("url").unwrap()
+                finding.str("severity").unwrap_or("unknown"),
+                finding.str("name").unwrap_or(""),
+                finding.str("title").unwrap_or(""),
+                finding.str("url").unwrap_or("")
             );
             if let Some(Value::Array(nodes)) = finding.get("affected") {
                 for node in nodes {
                     println!(
                         "  {} ({})",
-                        node.str("location").unwrap(),
-                        node.str("version").unwrap()
+                        node.str("location").unwrap_or(""),
+                        node.str("version").unwrap_or("")
                     );
                 }
             }

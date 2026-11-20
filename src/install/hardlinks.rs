@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -73,52 +73,68 @@ fn valid_object(path: &Path, digest: &[u8; 32], expected_exec: bool) -> Result<b
 }
 
 fn publish_file(source: &Path, store: &Path) -> Result<PathBuf> {
-    let digest = checksum(source)?;
     let exec = executable(source)?;
-    let object = object_path(store, &digest, exec);
-    if valid_object(&object, &digest, exec)? {
-        return Ok(object);
+    // Copy and hash in one pass; the object name depends on the content, so the
+    // temporary file lives under the store and is published afterwards.
+    let temporary_dir = store.join("tmp-v1");
+    fs::create_dir_all(&temporary_dir)?;
+    #[cfg(unix)]
+    fs::set_permissions(&temporary_dir, fs::Permissions::from_mode(0o700))?;
+    let temporary = temporary_dir.join(format!("{}-{}", std::process::id(), crate::fs::unique()));
+    let mut hasher = Sha256::new();
+    let mut input = fs::File::open(source)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let copied = (|| -> Result<()> {
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+            output.write_all(&buffer[..count])?;
+        }
+        output.sync_all()?;
+        Ok(())
+    })();
+    drop(output);
+    if let Err(error) = copied {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
+    #[cfg(unix)]
+    fs::set_permissions(
+        &temporary,
+        fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }),
+    )?;
+    let digest: [u8; 32] = hasher.finalize().into();
+    let object = object_path(store, &digest, exec);
     let parent = object
         .parent()
         .context("invalid shared store object path")?;
     fs::create_dir_all(parent)?;
     #[cfg(unix)]
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-    // Existing corrupted cache names must never be used to serve new installs.
-    if fs::symlink_metadata(&object).is_ok() {
-        fs::remove_file(&object)?;
-    }
-    let temporary = parent.join(format!(".{}-{}", std::process::id(), crate::fs::unique()));
-    let result = (|| -> Result<()> {
-        let mut input = fs::File::open(source)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
-        drop(output);
-        #[cfg(unix)]
-        fs::set_permissions(
-            &temporary,
-            fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }),
-        )?;
-        // Publish with create-if-absent semantics, preserving other processes'
-        // simultaneous objects; on success the inode is immutable on Unix.
-        match fs::hard_link(&temporary, &object) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-            Err(error) => Err(error.into()),
+    let result: Result<()> = match fs::hard_link(&temporary, &object) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Only objects we did not just write need an integrity check.
+            if valid_object(&object, &digest, exec)? {
+                Ok(())
+            } else {
+                // Replace a corrupted object with the copy we just verified.
+                fs::remove_file(&object)?;
+                fs::hard_link(&temporary, &object)?;
+                Ok(())
+            }
         }
-    })();
+        Err(error) => Err(error.into()),
+    };
     let _ = fs::remove_file(&temporary);
     result?;
-    ensure!(
-        valid_object(&object, &digest, exec)?,
-        "shared hardlink store object failed integrity verification: {}",
-        object.display()
-    );
     Ok(object)
 }
 

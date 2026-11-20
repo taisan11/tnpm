@@ -10,11 +10,20 @@ pub fn write_json(path: &Path, value: &Value) -> Result<()> {
 pub fn write_text(path: &Path, text: &str) -> Result<()> {
     let parent = path.parent().context("JSON path has no parent")?;
     fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".tnpm-json-{}-{}", std::process::id(), unique()));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
+    // A crashed process can leave a temporary file whose name a recycled PID
+    // would reuse. Keep advancing the suffix instead of failing the write.
+    let (temp, mut file) = loop {
+        let candidate = parent.join(format!(".tnpm-json-{}-{}", std::process::id(), unique()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    };
     let result = (|| -> Result<()> {
         file.write_all(text.as_bytes())?;
         drop(file);

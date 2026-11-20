@@ -73,9 +73,16 @@ fn command_output(
         c.arg("/d").arg("/s").arg("/c").arg(text);
         c
     };
+    let mut path = std::ffi::OsString::new();
+    for (index, entry) in paths.iter().enumerate() {
+        if index > 0 {
+            path.push(if cfg!(windows) { ";" } else { ":" });
+        }
+        path.push(entry);
+    }
     child
         .current_dir(root)
-        .env("PATH", env::join_paths(paths)?)
+        .env("PATH", path)
         .env("npm_lifecycle_event", event)
         .env("npm_lifecycle_script", script)
         .env("npm_package_json", root.join("package.json"))
@@ -86,9 +93,13 @@ fn command_output(
     if stdout_to_stderr {
         child.stdout(std::process::Stdio::from(std::io::stderr()));
     }
-    let status = if crate::util::style::progress::active() {
+    // On a real terminal, hand stdio to the child so `isatty` works, matching
+    // npm. Keep forwarding when output is redirected (JSON, CI, pipes).
+    let inherit = !stdout_to_stderr && io::stdout().is_terminal() && io::stderr().is_terminal();
+    let status = if crate::util::style::progress::active() && !inherit {
         streaming_status(&mut child, stdout_to_stderr)
     } else {
+        crate::util::style::progress::finish();
         child.status().map_err(Into::into)
     }
     .with_context(|| format!("could not run {event} script"))?;
@@ -102,23 +113,38 @@ fn forward_output(
     terminal: bool,
 ) -> io::Result<()> {
     let mut buffer = [0; 8192];
+    let mut failure = None;
     loop {
         let length = match input.read(&mut buffer) {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             result => result?,
         };
         if length == 0 {
-            return Ok(());
+            break;
+        }
+        // Keep draining after a write error. Returning early would leave the
+        // child blocked on a full pipe and deadlock `child.wait()`.
+        if failure.is_some() {
+            continue;
         }
         let mut open = line_open.lock().unwrap_or_else(|e| e.into_inner());
         if terminal {
             crate::util::style::progress::finish();
         }
-        output.write_all(&buffer[..length])?;
-        output.flush()?;
+        if let Err(error) = output
+            .write_all(&buffer[..length])
+            .and_then(|()| output.flush())
+        {
+            failure = Some(error);
+            continue;
+        }
         if terminal {
             *open = buffer[length - 1] != b'\n';
         }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -212,17 +238,14 @@ pub fn lifecycle_output(
 }
 
 pub fn bins(manifest: &Value) -> Vec<(String, String)> {
-    match manifest.get("bin") {
-        Some(Value::String(path)) => vec![(
-            manifest
-                .str("name")
-                .unwrap_or("")
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .into(),
-            path.clone(),
-        )],
+    bins_value(manifest.get("bin"), manifest.str("name").unwrap_or(""))
+}
+
+pub fn bins_value(bin: Option<&Value>, name: &str) -> Vec<(String, String)> {
+    match bin {
+        Some(Value::String(path)) => {
+            vec![(name.rsplit('/').next().unwrap_or("").into(), path.clone())]
+        }
         Some(Value::Object(members)) => members
             .iter()
             .filter_map(|(name, value)| value.string().map(|s| (name.clone(), s.into())))

@@ -323,16 +323,35 @@ pub(super) async fn prepare(ctx: &Context<'_>, entry: &Value, destination: &Path
                 "workspace links require Developer Mode or symlink privileges on Windows",
             )?;
         } else if source.is_dir() {
+            // The staging directory lives under node_modules, which copy_directory
+            // already skips; allow it while still rejecting other self-copies.
+            let staged = destination.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_string_lossy()
+                    .starts_with(".tnpm-stage-")
+            });
             ensure!(
-                !destination.starts_with(&source),
+                !destination.starts_with(&source) || staged,
                 "local dependency cannot contain installation staging directory"
             );
-            copy_directory(&source, destination)?;
+            let source = source.clone();
+            let destination = destination.to_owned();
+            tokio::task::spawn_blocking(move || copy_directory(&source, &destination))
+                .await
+                .context("local dependency copy task failed")??;
         } else {
-            let bytes = fs::read(source)?;
+            let bytes = tokio::task::spawn_blocking(move || fs::read(source))
+                .await
+                .context("local dependency read task failed")??;
             store::verify(&bytes, entry.str("integrity"))?;
-            fs::create_dir(destination)?;
-            store::unpack(&bytes, destination)?;
+            let destination = destination.to_owned();
+            tokio::task::spawn_blocking(move || {
+                fs::create_dir(&destination)?;
+                store::unpack(&bytes, &destination)
+            })
+            .await
+            .context("local dependency extract task failed")??;
         }
         return Ok(true);
     }
@@ -344,8 +363,13 @@ pub(super) async fn prepare(ctx: &Context<'_>, entry: &Value, destination: &Path
             tokio::task::spawn_blocking(move || git_archive(&resolved, offline, no_cache))
                 .await??;
         store::verify(&bytes, entry.str("integrity"))?;
-        fs::create_dir(destination)?;
-        store::unpack(&bytes, destination)?;
+        let destination = destination.to_owned();
+        tokio::task::spawn_blocking(move || {
+            fs::create_dir(&destination)?;
+            store::unpack(&bytes, &destination)
+        })
+        .await
+        .context("Git dependency extract task failed")??;
         return Ok(true);
     }
     Ok(false)

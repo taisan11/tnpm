@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{StreamExt, stream};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 
 mod peers;
@@ -83,33 +83,82 @@ fn matches(entry: &Value, name: &str, range: &str) -> bool {
     spec::satisfies(name, range, entry) == Some(true)
 }
 
+/// Declared non-peer spec for `name`, matching `lockfile::dependencies` precedence
+/// (later dependency fields win) without allocating a dependency list.
+fn declared_spec<'a>(data: &'a Value, name: &str, root: bool) -> Option<&'a str> {
+    let mut spec = None;
+    for field in ["dependencies", "devDependencies", "optionalDependencies"] {
+        if field == "devDependencies" && !root && data.get("tnpmWorkspace").is_none() {
+            continue;
+        }
+        for (key, value) in data.get(field).map(Value::members).unwrap_or_default() {
+            if key == name {
+                spec = value.string();
+            }
+        }
+    }
+    spec
+}
+
+fn index_package(
+    lock: &Lockfile,
+    dependents: &mut FxHashMap<String, FxHashSet<String>>,
+    path: &str,
+) {
+    let Some(data) = lock.packages.get(path) else {
+        return;
+    };
+    for dep in lockfile::dependencies(data, path.is_empty())
+        .into_iter()
+        .filter(|dep| !dep.peer)
+    {
+        dependents
+            .entry(dep.name)
+            .or_default()
+            .insert(path.to_owned());
+    }
+}
+
 // A hoisted package must not shadow a previously satisfied dependency with an
 // incompatible version. Only packages below the candidate's parent can see it.
-fn preserves_dependencies(lock: &mut Lockfile, path: &str, entry: &Value, name: &str) -> bool {
+fn preserves_dependencies(
+    lock: &mut Lockfile,
+    dependents: &FxHashMap<String, FxHashSet<String>>,
+    path: &str,
+    entry: &Value,
+    name: &str,
+) -> bool {
     let scope = lockfile::parent(path);
-    let affected: Vec<_> = lock
-        .packages
-        .iter()
-        .filter(|(from, _)| {
-            scope.is_empty()
-                || *from == scope
-                || from.starts_with(&format!("{scope}/node_modules/"))
-        })
-        .flat_map(|(from, data)| {
-            lockfile::dependencies(data, from.is_empty())
-                .into_iter()
-                .filter(|dep| !dep.peer && dep.name == name)
-                .filter(|dep| {
-                    lock.resolve(from, name)
-                        .is_some_and(|p| matches(&lock.packages[&p], name, &dep.spec))
-                })
-                .map(|dep| (from.clone(), dep))
-        })
-        .collect();
+    let prefix = if scope.is_empty() {
+        String::new()
+    } else {
+        format!("{scope}/node_modules/")
+    };
+    let in_scope = |from: &str| scope.is_empty() || from == scope || from.starts_with(&prefix);
+    let mut affected: Vec<(String, String)> = Vec::new();
+    if let Some(froms) = dependents.get(name) {
+        for from in froms {
+            if !in_scope(from) {
+                continue;
+            }
+            let Some(data) = lock.packages.get(from) else {
+                continue;
+            };
+            let Some(spec) = declared_spec(data, name, from.is_empty()) else {
+                continue;
+            };
+            if lock
+                .resolve(from, name)
+                .is_some_and(|p| matches(&lock.packages[&p], name, spec))
+            {
+                affected.push((from.clone(), spec.to_owned()));
+            }
+        }
+    }
     lock.packages.insert(path.to_owned(), entry.clone());
-    let valid = affected.iter().all(|(from, dep)| {
+    let valid = affected.iter().all(|(from, spec)| {
         lock.resolve(from, name)
-            .is_some_and(|p| matches(&lock.packages[&p], name, &dep.spec))
+            .is_some_and(|p| matches(&lock.packages[&p], name, spec))
     });
     lock.packages.remove(path);
     valid
@@ -124,32 +173,43 @@ pub(super) async fn resolve(
 ) -> Result<Lockfile> {
     ctx.progress.event("resolve", "checking dependency graph");
     super::overrides::validate(manifest)?;
-    let has_sources = manifest.get("workspaces").is_some()
-        || old.is_some_and(|l| l.packages.values().any(|v| v.get("tnpmSpec").is_some()));
+    // Workspace and file: sources can change without the root manifest, so they
+    // always re-resolve. Git/tarball locks are pinned and may be reused.
+    let sources_reusable = manifest.get("workspaces").is_none()
+        && old.is_some_and(|lock| {
+            lock.packages.values().all(|entry| {
+                entry.str("tnpmSpec").is_none_or(|spec| {
+                    super::sources::is_git(spec) || super::sources::is_tarball(spec)
+                })
+            })
+        });
+    let policy = ctx.peer_policy();
     if !update
-        && !has_sources
+        && sources_reusable
         && let Some(old) = old
-        && old.validate_with(manifest, ctx.peer_policy()).is_ok()
+        && old.validate_root(manifest).is_ok()
     {
         let mut lock = old.clone();
-        let used = lock.reachable_with(manifest, true, ctx.peer_policy())?;
-        lock.packages
-            .retain(|p, _| p.is_empty() || used.contains(p));
-        lock.packages
-            .insert("".into(), lockfile::root_entry(manifest));
-        lock.classify_with(manifest, ctx.peer_policy());
-        ctx.progress.event(
-            "resolve",
-            &format!(
-                "reusing {} locked packages",
-                lock.packages.len().saturating_sub(1)
-            ),
-        );
-        return Ok(lock);
+        if let Ok(used) = lock.reuse(manifest, policy) {
+            lock.packages
+                .retain(|p, _| p.is_empty() || used.contains(p));
+            lock.packages
+                .insert("".into(), lockfile::root_entry(manifest));
+            ctx.progress.event(
+                "resolve",
+                &format!(
+                    "reusing {} locked packages",
+                    lock.packages.len().saturating_sub(1)
+                ),
+            );
+            return Ok(lock);
+        }
     }
     let mut lock = Lockfile::default();
     lock.packages
         .insert("".into(), lockfile::root_entry(manifest));
+    let mut dependents: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+    index_package(&lock, &mut dependents, "");
     let mut pending: Vec<(String, Dependency)> = lockfile::dependencies(manifest, true)
         .into_iter()
         .filter(|d| !d.peer)
@@ -198,16 +258,34 @@ pub(super) async fn resolve(
                 requests.insert(key);
             }
         }
-        let responses: Vec<_> = stream::iter(requests.into_iter().map(|(name, spec)| async move {
-            let result = ctx
-                .metadata(&name, &spec)
-                .await
-                .and_then(|v| descriptor(&v));
-            ((name, spec), result)
-        }))
-        .buffer_unordered(CONCURRENCY)
-        .collect()
-        .await;
+        // Fetch one selector per package first so the URL-keyed document cache
+        // is populated; other selectors for the same packument then resolve
+        // locally instead of issuing duplicate requests.
+        let mut first = Vec::new();
+        let mut rest = Vec::new();
+        let mut previous: Option<String> = None;
+        for (name, spec) in requests {
+            if previous.as_deref() == Some(name.as_str()) {
+                rest.push((name, spec));
+            } else {
+                previous = Some(name.clone());
+                first.push((name, spec));
+            }
+        }
+        let mut responses = Vec::new();
+        for batch in [first, rest] {
+            let part: Vec<_> = stream::iter(batch.into_iter().map(|(name, spec)| async move {
+                let result = ctx
+                    .metadata(&name, &spec)
+                    .await
+                    .and_then(|v| descriptor(&v));
+                ((name, spec), result)
+            }))
+            .buffer_unordered(CONCURRENCY)
+            .collect()
+            .await;
+            responses.extend(part);
+        }
         let mut errors = FxHashMap::default();
         for (key, result) in responses {
             match result {
@@ -276,7 +354,7 @@ pub(super) async fn resolve(
                     }
                     break;
                 }
-                if preserves_dependencies(&mut lock, &candidate, &entry, &dep.name) {
+                if preserves_dependencies(&mut lock, &dependents, &candidate, &entry, &dep.name) {
                     location = Some(candidate);
                 } else {
                     break;
@@ -312,23 +390,31 @@ pub(super) async fn resolve(
             {
                 next.push((location.clone(), dep));
             }
-            lock.packages.insert(location, entry);
+            lock.packages.insert(location.clone(), entry);
+            index_package(&lock, &mut dependents, &location);
+            // `bundles::insert` adds packages directly; index the new subtree.
+            let prefix = format!("{location}/");
+            let bundled: Vec<String> = lock
+                .packages
+                .range(location.clone()..)
+                .take_while(|(path, _)| {
+                    path.as_str() == location.as_str() || path.starts_with(&prefix)
+                })
+                .map(|(path, _)| path.clone())
+                .filter(|path| path != &location)
+                .collect();
+            for path in bundled {
+                index_package(&lock, &mut dependents, &path);
+            }
         }
         pending = next;
     }
-    let strict_policy = lockfile::PeerPolicy {
-        strict: true,
-        force: false,
-        ..ctx.peer_policy()
-    };
-    if !lock.peer_conflicts(strict_policy).is_empty() {
+    if !lock.finalize(manifest, ctx.peer_policy())? {
         ctx.progress
             .event("resolve", "checking peer dependency sets");
         // Keep the parallel fast path for peer-free trees. Peer sets need a joint
         // placement/version search rather than independent greedy hoisting.
         return peers::resolve(ctx, manifest, old, update).await;
     }
-    lock.classify_with(manifest, ctx.peer_policy());
-    lock.reachable_with(manifest, true, ctx.peer_policy())?;
     Ok(lock)
 }

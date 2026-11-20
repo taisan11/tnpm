@@ -177,7 +177,7 @@ pub(super) fn convert(
         .filter(|path| !flag(&lock.packages[*path], "link"))
         .collect();
     // Move descendants before parents, avoiding relocation of nested node_modules.
-    order.sort_by_key(|path| {
+    order.sort_by_cached_key(|path| {
         std::cmp::Reverse((path.matches("/node_modules/").count(), path.len()))
     });
     for path in order {

@@ -122,13 +122,32 @@ impl fmt::Display for Version {
     }
 }
 
+/// A parsed npm range. Callers that evaluate one range against many versions
+/// should parse it once instead of re-parsing inside `satisfies`.
+#[derive(Clone, Debug)]
+pub struct Range(Vec<VersionReq>);
+
+impl Range {
+    pub fn parse(range: &str) -> Option<Self> {
+        parse_range(range).map(Self)
+    }
+
+    pub fn matches(&self, version: &Version) -> bool {
+        self.0.iter().any(|request| request.matches(&version.0))
+    }
+
+    pub fn matches_str(&self, version: &str) -> Option<bool> {
+        Some(self.matches(&Version(parse_version(version)?)))
+    }
+}
+
 /// Evaluate a registry version against npm's range syntax.
 ///
 /// Non-registry specs (file:, git URLs, aliases, tags) return `None`.
 pub fn satisfies(version: &str, range: &str) -> Option<bool> {
-    let version = parse_version(version)?;
-    let requests = parse_range(range)?;
-    Some(requests.iter().any(|request| request.matches(&version)))
+    let version = Version(parse_version(version)?);
+    let range = Range::parse(range)?;
+    Some(range.matches(&version))
 }
 
 /// Ranges are unions of comparator intervals. An inhabited intersection has a

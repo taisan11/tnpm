@@ -3,7 +3,7 @@
 use super::{CONCURRENCY, Context, Dependency, Lockfile, Value, descriptor, flag, lockfile, spec};
 use anyhow::{Result, bail};
 use futures_util::{StreamExt, stream};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     collections::{BTreeSet, VecDeque},
     rc::Rc,
@@ -15,7 +15,7 @@ const SEARCH_LIMIT: usize = 200_000;
 const PREFERRED_SEARCH_LIMIT: usize = 20_000;
 const PREFERRED_BACKTRACK_LIMIT: usize = 128;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Edge {
     from: String,
     dep: Dependency,
@@ -25,6 +25,7 @@ struct Edge {
 struct State {
     lock: Lockfile,
     queue: VecDeque<Edge>,
+    enqueued: FxHashSet<Edge>,
     overridden: BTreeSet<(String, String)>,
 }
 
@@ -61,10 +62,27 @@ struct Search<'a> {
 }
 
 impl State {
+    fn new(lock: Lockfile, queue: VecDeque<Edge>) -> Self {
+        Self {
+            lock,
+            enqueued: queue.iter().cloned().collect(),
+            queue,
+            overridden: BTreeSet::new(),
+        }
+    }
+
     fn enqueue(&mut self, edge: Edge) {
-        if !self.queue.contains(&edge) {
+        if self.enqueued.insert(edge.clone()) {
             self.queue.push_back(edge);
         }
+    }
+
+    /// Keep `enqueued` exactly in sync with the queue so a re-checked edge can be
+    /// queued again after a later placement changes visibility.
+    fn pop(&mut self) -> Option<Edge> {
+        let edge = self.queue.pop_front()?;
+        self.enqueued.remove(&edge);
+        Some(edge)
     }
 
     fn satisfied(&self, edge: &Edge, catalog: &Catalog) -> bool {
@@ -112,6 +130,17 @@ fn edges(from: &str, data: &Value) -> Vec<Edge> {
         .collect()
 }
 
+fn declares(data: &Value, name: &str) -> bool {
+    [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ]
+    .iter()
+    .any(|field| data.get(field).and_then(|map| map.get(name)).is_some())
+}
+
 impl Search<'_> {
     fn retry_with_overrides(&mut self) -> bool {
         if self.allow_override || !self.policy.allows_mismatch() {
@@ -120,11 +149,7 @@ impl Search<'_> {
         let mut lock = Lockfile::default();
         lock.packages
             .insert("".into(), lockfile::root_entry(self.manifest));
-        self.state = State {
-            lock,
-            queue: edges("", self.manifest).into(),
-            overridden: BTreeSet::new(),
-        };
+        self.state = State::new(lock, edges("", self.manifest).into());
         self.branches.clear();
         self.steps = 0;
         self.backtracks = 0;
@@ -214,17 +239,21 @@ impl Search<'_> {
                 )?;
                 self.state.lock.packages.insert(path.clone(), entry);
                 // Changing visibility can activate an optional peer or shadow a
-                // previously satisfied peer. Recheck affected edges, not just new ones.
-                let affected: Vec<_> = self
-                    .state
-                    .lock
-                    .packages
-                    .iter()
-                    .flat_map(|(p, v)| edges(p, v))
-                    .filter(|e| {
-                        e.dep.name == edge.dep.name && !self.state.satisfied(e, &self.catalog)
-                    })
-                    .collect();
+                // previously satisfied peer. Recheck only packages that declare
+                // this name instead of rebuilding every package's edge list.
+                let mut affected = Vec::new();
+                for (package, data) in &self.state.lock.packages {
+                    if !declares(data, &edge.dep.name) {
+                        continue;
+                    }
+                    for candidate in edges(package, data) {
+                        if candidate.dep.name == edge.dep.name
+                            && !self.state.satisfied(&candidate, &self.catalog)
+                        {
+                            affected.push(candidate);
+                        }
+                    }
+                }
                 for e in outgoing
                     .into_iter()
                     .chain(bundled.into_iter().map(|(from, dep)| Edge { from, dep }))
@@ -275,7 +304,7 @@ impl Search<'_> {
             if self.state.lock.packages.len() > 50_000 {
                 return Step::Failed("dependency graph exceeds 50,000 packages".into());
             }
-            let Some(edge) = self.state.queue.pop_front() else {
+            let Some(edge) = self.state.pop() else {
                 let policy = if self.allow_override {
                     self.policy
                 } else {
@@ -326,6 +355,7 @@ impl Search<'_> {
             }
             let key = (edge.dep.name.clone(), edge.dep.spec.clone());
             if !self.catalog.contains_key(&key) {
+                self.state.enqueued.insert(edge.clone());
                 self.state.queue.push_front(edge);
                 let requests = self
                     .state
@@ -461,11 +491,7 @@ pub(super) async fn resolve(
     lock.packages
         .insert("".into(), lockfile::root_entry(manifest));
     let mut search = Search {
-        state: State {
-            lock,
-            queue: edges("", manifest).into(),
-            overridden: BTreeSet::new(),
-        },
+        state: State::new(lock, edges("", manifest).into()),
         branches: Vec::new(),
         catalog: FxHashMap::default(),
         manifest,
@@ -490,26 +516,39 @@ pub(super) async fn resolve(
                 bail!("{error}");
             }
             Step::Fetch(requests) => {
-                let responses: Vec<_> =
-                    stream::iter(requests.into_iter().map(|(name, spec)| async move {
-                        let result = ctx
-                            .metadata_versions(&name, &spec)
-                            .await
-                            .and_then(|versions| {
-                                versions
-                                    .iter()
-                                    .rev()
-                                    .map(descriptor)
-                                    .map(|r| r.map(Rc::new))
-                                    .collect::<Result<Vec<_>>>()
-                            })
-                            .map_err(|e| format!("{e:#}"));
-                        ((name, spec), result)
-                    }))
-                    .buffer_unordered(CONCURRENCY)
-                    .collect()
-                    .await;
-                search.catalog.extend(responses);
+                let mut first = Vec::new();
+                let mut rest = Vec::new();
+                let mut previous: Option<String> = None;
+                for (name, spec) in requests {
+                    if previous.as_deref() == Some(name.as_str()) {
+                        rest.push((name, spec));
+                    } else {
+                        previous = Some(name.clone());
+                        first.push((name, spec));
+                    }
+                }
+                for batch in [first, rest] {
+                    let responses: Vec<_> =
+                        stream::iter(batch.into_iter().map(|(name, spec)| async move {
+                            let result = ctx
+                                .metadata_versions(&name, &spec)
+                                .await
+                                .and_then(|versions| {
+                                    versions
+                                        .iter()
+                                        .rev()
+                                        .map(descriptor)
+                                        .map(|r| r.map(Rc::new))
+                                        .collect::<Result<Vec<_>>>()
+                                })
+                                .map_err(|e| format!("{e:#}"));
+                            ((name, spec), result)
+                        }))
+                        .buffer_unordered(CONCURRENCY)
+                        .collect()
+                        .await;
+                    search.catalog.extend(responses);
+                }
             }
         }
     }
@@ -524,11 +563,7 @@ mod tests {
         lock.packages
             .insert("".into(), lockfile::root_entry(manifest));
         Search {
-            state: State {
-                lock,
-                queue: edges("", manifest).into(),
-                overridden: BTreeSet::new(),
-            },
+            state: State::new(lock, edges("", manifest).into()),
             branches: Vec::new(),
             catalog: FxHashMap::default(),
             manifest,

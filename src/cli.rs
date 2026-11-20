@@ -185,7 +185,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                     options.all = true
                 }
                 "--depth" if options.command == "ls" => {
-                    options.depth = Some(value.unwrap().parse().context("invalid --depth")?)
+                    options.depth = Some(
+                        value
+                            .context("--depth requires a value")?
+                            .parse()
+                            .context("invalid --depth")?,
+                    )
                 }
                 "--preid" if options.command == "version" => options.preid = value,
                 "--no-git-tag-version" if options.command == "version" => options.no_git_tag = true,
@@ -203,13 +208,17 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                 "--global" | "-g" => options.global = true,
                 "--engine-strict" => options.engine_strict = true,
                 "--workspaces" => options.workspaces = true,
-                "--workspace" | "-w" => options.workspace.push(value.unwrap()),
-                "--trust" => options.trust.push(value.unwrap()),
+                "--workspace" | "-w" => options
+                    .workspace
+                    .push(value.context("--workspace requires a value")?),
+                "--trust" => options
+                    .trust
+                    .push(value.context("--trust requires a value")?),
                 "--parallel" if options.command == "run" => options.parallel = true,
                 "--topological" if options.command == "run" => options.topological = true,
                 "--concurrency" if options.command == "run" => {
                     let count = value
-                        .unwrap()
+                        .context("--concurrency requires a value")?
                         .parse::<usize>()
                         .context("invalid --concurrency")?;
                     if count == 0 {
@@ -230,7 +239,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                 "--if-present" => options.if_present = true,
                 "--yes" | "-y" => options.yes = true,
                 "--call" | "-c" => options.call = value,
-                "--package" | "-p" => options.exec_packages.push(value.unwrap()),
+                "--package" | "-p" => options
+                    .exec_packages
+                    .push(value.context("--package requires a value")?),
                 _ => bail!("unknown option: {name}"),
             }
         } else if options.command.is_empty() {

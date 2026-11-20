@@ -44,12 +44,13 @@ src/
     http_cache.rs          HTTP キャッシュポリシー
     transport.rs           通信設定と計測時の切り替え
   lockfile.rs              lockfile の読み書き・パス・依存グラフの検証
-  lockfile/graph.rs        借用した依存情報・整数 ID・SoA 配列による到達性と分類
+  lockfile/graph.rs        借用した依存情報・整数 ID・SoA 配列による到達性・分類・peer 検査
   manifest.rs              package.json の読み込みと検証
   semver.rs                semver crate による解析・比較と npm 範囲・増分
   spec.rs                  パッケージ名とバージョン／タグ／範囲指定の解析
   jsr.rs                   jsr: 指定と公式 npm 互換名への変換
   runner/remote.rs          HTTP(S) ソース取得・検証・private cache と隔離パッケージ解決
+  runner/bridge.rs          Node 同期フック用の常駐ブリッジ（フレーム化 JSON、結果メモ化）
   workspaces.rs            symlink を辿らない workspace 探索・選択
   global.rs                ユーザー領域のグローバル配置・bin の所有管理
   util/style/

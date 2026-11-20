@@ -1,9 +1,9 @@
 //! Application setup and command dispatch; process exit handling stays in main.
 use crate::{cli, commands, config, install};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 pub fn run() -> Result<()> {
-    let Some(mut options) = cli::parse(std::env::args().skip(1))? else {
+    let Some(mut options) = cli::parse(arguments()?)? else {
         return Ok(());
     };
     if options.global {
@@ -130,6 +130,17 @@ pub fn run() -> Result<()> {
                     install::run(&root, &options, &config).await
                 }
             }),
-        _ => unreachable!(),
+        _ => bail!("unsupported command: {}", options.command),
     }
+}
+
+fn arguments() -> Result<Vec<String>> {
+    std::env::args_os()
+        .skip(1)
+        .map(|argument| {
+            argument
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("command line contains a non-UTF-8 argument"))
+        })
+        .collect()
 }

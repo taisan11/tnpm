@@ -5,8 +5,8 @@
 ## インストールの高速化・lockfile
 
 - `tnpm-lock.json`（JSON、`tnpmLockfileVersion: 1`）を使用します。パッケージごとに `[version, resolved, integrity, その他のフィールド]` を1行に保存します。npm の `package-lock.json` と `npm-shrinkwrap.json` は読み書きしません。`--package-lock-only` は `tnpm-lock.json` のみを更新します。
-- メタデータ・tarball を最大16並列で取得し、HTTP 接続を再利用。展開は blocking pool へ分離します。同じ name/range の解決は実行中に共有します。
-- lockfile の到達可能性検証・依存フラグの分類は、借用した文字列と連続した依存先 ID・オフセット・フラグ配列で走査します。JSON 全体の複製やキュー内のパス文字列コピーを避け、インストール対象の絞り込みも JSON を複製せず行います。npm の lockfile 形式は変更しません。[変更前後のローカル測定](https://github.com/taisan11/tnpm/blob/main/benchmarks/results/graph-layout.md)。
+- メタデータ・tarball を最大16並列で取得し、HTTP 接続を再利用。展開は blocking pool へ分離します。同じ URL のメタデータは実行中に1回だけ取得・解析し、タグ・範囲・フィールドの違いはその結果から解決します。
+- lockfile の到達可能性検証・依存フラグの分類・peer 検査は、借用した文字列と連続した依存先 ID・オフセット・フラグ配列を共有する1つの索引で行います。JSON 全体の複製やキュー内のパス文字列コピーを避け、インストール対象の絞り込みも JSON を複製せず行います。変更がなく検証できる lockfile は、git / tarball ソース（`resolved` が固定）を含む場合も再解決せず再利用します。workspace / `file:` ソースは内容が変わり得るため毎回再解決します。npm の lockfile 形式は変更しません。[変更前後のローカル測定](https://github.com/taisan11/tnpm/blob/main/benchmarks/results/graph-layout.md)。
 - レジストリ tarball は取得時に integrity を検証して展開しますが、元 archive を保存しません。展開済みキャッシュがなければ再取得が必要です。直接 URL ソースの元 archive だけは `source-tarballs-v1` に URL / integrity をキーに保存し、offline 再配置に利用します。
 - 展開済みパッケージは名前とバージョンをキーに `~/.tnpm/cache/packages-v2/` に保存し、クリーン install では再解凍せず配置します。保存時の integrity が lockfile と異なる場合は再利用しません。integrity がない場合は展開済みキャッシュを読み書きせず、毎回取得します。macOS ではディレクトリ単位の `clonefile` を試し、リンクや特殊ファイルがないことを検証します。失敗時はファイル単位にフォールバックします。Linux では `FICLONE` を試し、非対応 filesystem では通常コピーを使用します。コピーオンライトで配置するため、install script による変更は共有キャッシュへ反映されません。認証付き・`--no-cache` の場合は読み書きしません。`--offline` でも展開済みキャッシュを利用できます。旧 `packages-v1` / `tarballs-v1` は使用・削除しません。
 - `prune` は不要な依存を `node_modules` から削除します。`prune --all` / `-a` は `node_modules` 全体を削除し、manifest・lockfile・共有キャッシュを維持します。
@@ -38,6 +38,6 @@ store-dir=~/.tnpm/cache
 - 配置方式の切り替え時と分離配置への再インストール時は `node_modules` を再構築します。lockfile の形式は変わりません。
 - 分離配置では現在 `rebuild` と通常の `prune` に未対応です。`tnpm install` で再配置するか、`tnpm prune --all` で全削除してください。依存 lifecycle script は現時点では hoisted の一時配置で実行後、分離リンクへ変換されます。
 - Windows の依存ディレクトリリンクには、特別なシンボリックリンク権限を要求しない NTFS Junction（`mklink /J` 相当）を使用します。Linux/macOS はディレクトリ symlink です。ファイルのハードリンクには Windows の NTFS と同じボリューム、または Unix の同一ファイルシステムが必要です。異なるボリュームに設定した場合はコピーで代替せずエラーを返します。
-- ハードリンクは同じファイル実体を共有するため、インストール後にパッケージファイルを**直接編集するとストアや別プロジェクトにも影響します**。将来のインストールでのストア再利用時は SHA-256 で再検証します。Unix ではストアへの登録時に書き込み権限を外します。Windows はリンク先の改変防止を保証しません。
+- ハードリンクは同じファイル実体を共有するため、インストール後にパッケージファイルを**直接編集するとストアや別プロジェクトにも影響します**。将来のインストールで既存ストアオブジェクトを再利用するときは SHA-256 で再検証し、破損していれば書き直します。新規登録はコピーしながら1回だけハッシュするため、登録直後の再ハッシュは行いません。Unix ではストアへの登録時に書き込み権限を外します。Windows はリンク先の改変防止を保証しません。
 
 調査時だけ `TNPM_PROFILE=1` と `TNPM_PROFILE_TRANSPORT=baseline|gzip|http2|both|default` を組み合わせると、圧縮・HTTP バージョンの条件を切り替えられます。通常実行は常にデフォルト機能と全圧縮形式を利用します。以前の調査用 Cargo feature `profile-gzip` / `profile-http2` は不要になりました。

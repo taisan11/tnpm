@@ -1,7 +1,7 @@
 //! Borrowed, indexed snapshot for repeated dependency walks. JSON remains the
 //! interchange format; traversal touches flat edge/offset/flag arrays instead
 //! of cloning JSON trees and carrying owned physical paths through the queue.
-use super::{Lockfile, PeerPolicy, parent, valid_name};
+use super::{Dependency as OwnedDependency, Lockfile, PeerPolicy, parent, peer_error, valid_name};
 use crate::{json::Value, spec};
 use anyhow::{Result, bail};
 use rustc_hash::FxHashMap;
@@ -76,6 +76,7 @@ pub(super) struct Graph<'a> {
     specs: Vec<&'a str>,
     edge_flags: Vec<u8>,
     targets: Vec<usize>,
+    children: FxHashMap<(usize, &'a str), usize>,
 }
 
 impl<'a> Graph<'a> {
@@ -135,6 +136,7 @@ impl<'a> Graph<'a> {
             specs: Vec::with_capacity(count.saturating_mul(4)),
             edge_flags: Vec::with_capacity(count.saturating_mul(4)),
             targets: Vec::with_capacity(count.saturating_mul(4)),
+            children,
         };
         let mut scratch = Vec::new();
         for (id, entry) in graph.data.iter().enumerate() {
@@ -148,7 +150,7 @@ impl<'a> Graph<'a> {
                 };
                 let target = if valid_name(dep.name) {
                     loop {
-                        if let Some(&target) = children.get(&(at, dep.name)) {
+                        if let Some(&target) = graph.children.get(&(at, dep.name)) {
                             break target;
                         }
                         if at == 0 {
@@ -241,6 +243,51 @@ impl<'a> Graph<'a> {
             }
         }
         flags
+    }
+
+    /// Peer conflicts and warnings in one edge scan, reusing the indexed graph
+    /// instead of re-extracting every package's dependencies.
+    pub(super) fn peer_issues(&self, policy: PeerPolicy) -> (Vec<String>, Vec<String>) {
+        let mut conflicts = Vec::new();
+        let mut warnings = Vec::new();
+        if policy.legacy {
+            return (conflicts, warnings);
+        }
+        let allow_mismatch = policy.allows_mismatch();
+        for id in 0..self.paths.len() {
+            let from = self.paths[id];
+            for edge in self.offsets[id]..self.offsets[id + 1] {
+                let flags = self.edge_flags[edge];
+                if flags & PEER == 0 {
+                    continue;
+                }
+                let name = self.names[edge];
+                let spec = self.specs[edge];
+                let optional = flags & OPTIONAL != 0;
+                let target = self.targets[edge];
+                let found = (target != MISSING).then(|| self.data[target]);
+                let nested = id != 0 && self.children.contains_key(&(id, name));
+                let mismatch =
+                    found.is_some_and(|entry| spec::satisfies(name, spec, entry) == Some(false));
+                let invalid = nested || mismatch;
+                let dependency = || OwnedDependency {
+                    name: name.into(),
+                    spec: spec.into(),
+                    dev: false,
+                    optional,
+                    peer: true,
+                };
+                if (invalid || (found.is_none() && !optional))
+                    && (!allow_mismatch || found.is_none() || nested)
+                {
+                    conflicts.push(peer_error(from, &dependency(), found));
+                }
+                if allow_mismatch && mismatch {
+                    warnings.push(peer_error(from, &dependency(), found));
+                }
+            }
+        }
+        (conflicts, warnings)
     }
 }
 

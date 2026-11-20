@@ -141,12 +141,18 @@ fn clone_file(_source: &Path, _destination: &Path) -> std::io::Result<bool> {
 }
 
 #[cfg(target_os = "macos")]
-fn validate_cloned_tree(path: &Path) -> std::io::Result<()> {
+fn validate_cloned_tree(path: &Path, depth: usize) -> std::io::Result<()> {
+    if depth > 128 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "package cache nesting exceeds 128 levels",
+        ));
+    }
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         if kind.is_dir() {
-            validate_cloned_tree(&entry.path())?;
+            validate_cloned_tree(&entry.path(), depth + 1)?;
         } else if !kind.is_file() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -163,22 +169,32 @@ pub(super) fn clone_tree(source: &Path, destination: &Path) -> std::io::Result<(
         && clone_file(source, destination)?
     {
         // clonefile also clones symlinks; validate before the package can be placed.
-        if let Err(error) = validate_cloned_tree(destination) {
+        if let Err(error) = validate_cloned_tree(destination, 0) {
             let _ = fs::remove_dir_all(destination);
             return Err(error);
         }
         return Ok(());
     }
-    clone_tree_files(source, destination)
+    clone_tree_files(source, destination, 0)
 }
 
-fn clone_tree_files(source: &Path, destination: &Path) -> std::io::Result<()> {
+fn clone_tree_files(source: &Path, destination: &Path, depth: usize) -> std::io::Result<()> {
+    if depth > 128 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "package cache nesting exceeds 128 levels",
+        ));
+    }
     let metadata = fs::symlink_metadata(source)?;
     if metadata.is_dir() && !metadata.file_type().is_symlink() {
         fs::create_dir(destination)?;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
-            clone_tree_files(&entry.path(), &destination.join(entry.file_name()))?;
+            clone_tree_files(
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                depth + 1,
+            )?;
         }
         fs::set_permissions(destination, metadata.permissions())?;
         return Ok(());
@@ -252,11 +268,21 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
         verify(bytes, integrity)?;
         return Ok(bytes.clone());
     }
-    if let Some(cache) = source_tarball_cache(ctx, entry)
-        && let Ok(bytes) = fs::read(cache)
-    {
-        verify(&bytes, integrity)?;
-        return Ok(bytes);
+    if let Some(cache) = source_tarball_cache(ctx, entry) {
+        let integrity = integrity.map(str::to_owned);
+        let result = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
+            let bytes = match fs::read(&cache) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
+            };
+            verify(&bytes, integrity.as_deref())?;
+            Ok(Some(bytes))
+        })
+        .await
+        .context("source tarball cache task failed")?;
+        if let Some(bytes) = result? {
+            return Ok(bytes);
+        }
     }
     let authorization = ctx.config.authorization(&url)?;
     if ctx.offline() {

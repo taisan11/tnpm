@@ -20,16 +20,21 @@ pub fn package_spec(spec: &str) -> Result<(&str, Option<&str>)> {
     let (name, selector) = at
         .map(|i| (&spec[..i], Some(&spec[i + 1..])))
         .unwrap_or((spec, None));
-    let parts: Vec<_> = name.split('/').collect();
-    let valid = match parts.as_slice() {
-        [name] => !name.starts_with('@') && !name.is_empty(),
-        [scope, name] => scope.starts_with('@') && scope.len() > 1 && !name.is_empty(),
-        _ => false,
+    // Validate without allocating: names are either `name` or `@scope/name`.
+    let (valid, dotted) = match name.split_once('/') {
+        None => (
+            !name.starts_with('@') && !name.is_empty(),
+            matches!(name, "." | ".."),
+        ),
+        Some((scope, rest)) => (
+            scope.starts_with('@') && scope.len() > 1 && !rest.is_empty() && !rest.contains('/'),
+            matches!(scope, "." | "..") || matches!(rest, "." | ".."),
+        ),
     };
     if !valid
+        || dotted
         || name.contains(['\\', '?', '#', '%', ':', '\0'])
         || name.chars().any(|c| c.is_whitespace() || c.is_control())
-        || parts.iter().any(|p| *p == "." || *p == "..")
     {
         bail!("invalid registry package name: {name}");
     }

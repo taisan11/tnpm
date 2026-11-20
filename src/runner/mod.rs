@@ -1,3 +1,4 @@
+mod bridge;
 mod commonjs;
 mod oxc;
 mod remote;
@@ -19,6 +20,9 @@ pub fn internal() -> Option<Result<()>> {
             let directory = args.next().context("missing toolchain shim directory")?;
             crate::toolchain::dispatch(Path::new(&directory), args.collect())
         })());
+    }
+    if command == "--tnpm-runner-bridge" {
+        return Some(bridge::run());
     }
     if command == "--tnpm-runner-transform" {
         return Some((|| {
