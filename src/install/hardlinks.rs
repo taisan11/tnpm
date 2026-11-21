@@ -327,6 +327,16 @@ pub(super) fn restore(index: &Value, store: &Path, destination: &Path) -> Result
     Ok(true)
 }
 
+fn index_name(path: &Path) -> Result<String> {
+    let name = path
+        .iter()
+        .map(|part| part.to_str().context("non-UTF-8 package path"))
+        .collect::<Result<Vec<_>>>()?
+        .join("/");
+    index_path(&name)?;
+    Ok(name)
+}
+
 pub(super) fn index_package(
     directory: &Path,
     store: &Path,
@@ -348,8 +358,8 @@ pub(super) fn index_package(
             if relative.as_os_str().is_empty() && entry.file_name() == "node_modules" {
                 continue;
             }
-            let name = path.to_str().context("non-UTF-8 package path")?;
-            index_path(name)?;
+            let name = index_name(&path)?;
+            let name = name.as_str();
             let metadata = fs::symlink_metadata(entry.path())?;
             ensure!(!super::tree::is_link(&metadata), "package contains a link");
             if metadata.is_dir() {
@@ -396,4 +406,22 @@ pub(super) fn index_package(
     index.set("files", files);
     index.set("directories", Value::Array(directories));
     Ok(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_names_use_portable_separators() {
+        assert_eq!(
+            index_name(&Path::new("lib").join("index.js")).unwrap(),
+            "lib/index.js"
+        );
+        assert_eq!(index_name(Path::new("index.js")).unwrap(), "index.js");
+        assert!(index_name(Path::new("")).is_err());
+        assert!(index_name(&Path::new("..").join("escape")).is_err());
+        #[cfg(unix)]
+        assert!(index_name(Path::new(r"lib\index.js")).is_err());
+    }
 }
