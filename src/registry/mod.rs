@@ -349,21 +349,57 @@ pub async fn fetch_using(
         let body = response_body(response).await?;
         profile.mark("body_ms");
         profile.number("decoded_body_bytes", body.len() as u64);
-        // Validate the response in place; avoid cloning the entire metadata body.
-        let text =
-            simdutf8::compat::from_utf8(&body).context("registry metadata is not valid UTF-8")?;
-        profile.mark("utf8_ms");
-        let value = Value::parse(text).context("could not parse registry metadata")?;
-        profile.mark("json_parse_ms");
-        if policy.can_store()
-            && let Ok(encoded) = cache::encode(&key, &value, &policy)
-            && let Ok(Some(encoded)) = Document::open(encoded, &key)
-        {
-            // Reuse the exact bytes that are written to disk, including the
-            // pre-sorted version index, instead of sorting plain JSON again.
-            let encoded = Rc::new(encoded);
-            let package = resolve_binary(&encoded, query)?;
+        let large = body.len() > 64 * 1024;
+        let selector = query.selector.to_owned();
+        let fields = query.fields.to_vec();
+        let metadata = query.metadata;
+        let latest_only = query.latest_only;
+        let decode_key = key.clone();
+        let decode_cache = cache.clone();
+        let decode = move || -> Result<_> {
+            let query = Query {
+                selector: &selector,
+                metadata,
+                latest_only,
+                fields: &fields,
+            };
+            let text = simdutf8::compat::from_utf8(&body)
+                .context("registry metadata is not valid UTF-8")?;
+            profile.mark("utf8_ms");
+            let value = Value::parse(text).context("could not parse registry metadata")?;
+            profile.mark("json_parse_ms");
+            let encoded = if policy.can_store() {
+                cache::encode(&decode_key, &value, &policy)
+                    .ok()
+                    .and_then(|bytes| Document::open(bytes, &decode_key).ok().flatten())
+            } else {
+                None
+            };
+            let package = if let Some(document) = &encoded {
+                resolve_binary(document, query)?
+            } else {
+                resolve_json(&value, query)?
+            };
             profile.mark("resolve_ms");
+            if encoded.is_none()
+                && policy.can_store()
+                && let Some(cache) = &decode_cache
+            {
+                cache_warning(cache.store(&decode_key, &value, &policy));
+            }
+            drop(value);
+            profile.mark("json_tree_drop_ms");
+            Ok((package, encoded, profile))
+        };
+        let (package, encoded, mut profile) = if large {
+            tokio::task::spawn_blocking(decode)
+                .await
+                .context("registry metadata task failed")??
+        } else {
+            decode()?
+        };
+        if let Some(encoded) = encoded {
+            let encoded = Rc::new(encoded);
             if let Some(cache) = &cache {
                 let cache = cache.clone();
                 let cache_key = key.clone();
@@ -372,22 +408,8 @@ pub async fn fetch_using(
                     .await;
             }
             remember(&key, encoded.clone());
-            profile.mark("cache_write_ms");
-            profile.text("source", "network");
-            drop(value);
-            profile.mark("json_tree_drop_ms");
-            return Ok(package);
-        }
-        let package = resolve_json(&value, query)?;
-        profile.mark("resolve_ms");
-        if policy.can_store()
-            && let Some(cache) = &cache
-        {
-            cache_warning(cache.store(&key, &value, &policy));
         }
         profile.mark("cache_write_ms");
-        drop(value);
-        profile.mark("json_tree_drop_ms");
         profile.text("source", "network");
         return Ok(package);
     }

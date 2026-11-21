@@ -225,6 +225,48 @@ fn lock_only_and_empty_graphs_do_not_prefetch_archives() {
 }
 
 #[test]
+fn large_metadata_preserves_valid_empty_and_invalid_response_handling() {
+    for kind in ["valid", "empty", "invalid"] {
+        let f = Fixture::new();
+        f.single("app", "");
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        {
+            let mut routes = f.routes.lock().unwrap();
+            let body = routes.get_mut("/app").unwrap();
+            if kind == "empty" {
+                *body = b"{}".to_vec();
+            }
+            body.resize(body.len() + 128 * 1024, b' ');
+            if kind == "invalid" {
+                *body.last_mut().unwrap() = 0xff;
+            }
+        }
+        let output = f.invoke(&["install", "--package-lock-only", "--ignore-scripts"]);
+        assert_eq!(
+            output.status.success(),
+            kind == "valid",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if kind == "valid" {
+            assert!(f.root.join("tnpm-lock.json").exists());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(if kind == "invalid" {
+                    "not valid UTF-8"
+                } else {
+                    "cache has no versions"
+                }),
+                "{stderr}"
+            );
+            assert!(!f.root.join("tnpm-lock.json").exists());
+        }
+        assert!(!f.root.join("node_modules").exists());
+    }
+}
+
+#[test]
 fn failed_prefetch_integrity_never_replaces_installed_files() {
     let f = Fixture::new();
     f.single("app", "");
