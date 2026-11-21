@@ -221,6 +221,7 @@ pub(super) async fn resolve(
     let mut pipeline = pipeline::Pipeline::new(
         ctx,
         manifest.get("overrides").is_none() && manifest.get("workspaces").is_none(),
+        old.is_none(),
     );
     while !pending.is_empty() {
         if lock.packages.len() > 50_000 {

@@ -225,6 +225,108 @@ fn lock_only_and_empty_graphs_do_not_prefetch_archives() {
 }
 
 #[test]
+fn discovered_archives_start_before_the_current_metadata_frontier_finishes() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"child":"1"}"#);
+    f.single("child", "");
+    f.single("z", "");
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let routes = Arc::new(
+        f.routes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(path, bytes)| {
+                let bytes = if path.starts_with("/tar/") {
+                    bytes.clone()
+                } else {
+                    String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replace(&f.url, &registry)
+                        .into_bytes()
+                };
+                (path.clone(), bytes)
+            })
+            .collect::<std::collections::HashMap<_, _>>(),
+    );
+    let events = Arc::new((Mutex::new(Vec::<String>::new()), Condvar::new()));
+    let failed = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (log, timed_out, stopped) = (events.clone(), failed.clone(), stop.clone());
+    let server = thread::spawn(move || {
+        let mut workers = Vec::new();
+        while !stopped.load(Ordering::Relaxed) {
+            let (mut socket, _) = match listener.accept() {
+                Ok(value) => value,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            let (log, timed_out, routes) = (log.clone(), timed_out.clone(), routes.clone());
+            workers.push(thread::spawn(move || {
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while socket.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") { break; }
+                }
+                let path = String::from_utf8(request).unwrap().split_whitespace().nth(1).unwrap().to_owned();
+                let (events, ready) = &*log;
+                let mut events = events.lock().unwrap();
+                events.push(path.clone());
+                ready.notify_all();
+                if path == "/z" {
+                    let (guard, result) = ready.wait_timeout_while(events, Duration::from_secs(5), |events| !events.iter().any(|p| p == "/tar/child-1.0.0.tgz")).unwrap();
+                    events = guard;
+                    if result.timed_out() { timed_out.store(true, Ordering::Relaxed); }
+                }
+                drop(events);
+                let body = &routes[&path];
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: public, max-age=600\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                socket.write_all(body).unwrap();
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    let output = f
+        .command()
+        .env("npm_config_registry", &registry)
+        .args(["install", "--ignore-scripts"])
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !failed.load(Ordering::Relaxed),
+        "discovered archive waited for the metadata frontier"
+    );
+    assert!(f.root.join("node_modules/child/package.json").exists());
+    assert_eq!(
+        events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| *p == "/tar/child-1.0.0.tgz")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn large_metadata_preserves_valid_empty_and_invalid_response_handling() {
     for kind in ["valid", "empty", "invalid"] {
         let f = Fixture::new();

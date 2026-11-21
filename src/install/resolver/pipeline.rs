@@ -18,6 +18,7 @@ pub(super) struct Pipeline<'c, 'o> {
     fetching: FuturesUnordered<LocalBoxFuture<'c, Response>>,
     pub(super) errors: FxHashMap<Key, anyhow::Error>,
     discover: bool,
+    prefetch_discovered: bool,
     packages: VecDeque<(Value, String)>,
     package_keys: FxHashSet<String>,
     preparing: FuturesUnordered<LocalBoxFuture<'c, ()>>,
@@ -26,7 +27,7 @@ pub(super) struct Pipeline<'c, 'o> {
 }
 
 impl<'c, 'o> Pipeline<'c, 'o> {
-    pub(super) fn new(ctx: &'c Context<'o>, discover: bool) -> Self {
+    pub(super) fn new(ctx: &'c Context<'o>, discover: bool, prefetch_discovered: bool) -> Self {
         Self {
             ctx,
             queued: VecDeque::new(),
@@ -36,6 +37,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             fetching: FuturesUnordered::new(),
             errors: FxHashMap::default(),
             discover,
+            prefetch_discovered,
             packages: VecDeque::new(),
             package_keys: FxHashSet::default(),
             preparing: FuturesUnordered::new(),
@@ -89,11 +91,15 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             let ctx = self.ctx;
             self.preparing.push(
                 async move {
+                    let mut profile = crate::profile::Profile::new("archive");
+                    profile.text("name", name.as_str());
+                    profile.timestamp("started_unix");
                     let result = async {
                         let cache =
                             store::package_cache_path(ctx, &entry, &format!("node_modules/{name}"))
                                 .unwrap();
                         let bytes = store::tarball(ctx, &entry, &name).await?;
+                        profile.mark("download_ms");
                         ctx.progress
                             .event("prepare", &format!("extract node_modules/{name}"));
                         let integrity = entry.str("integrity").unwrap().to_owned();
@@ -109,6 +115,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                             store::publish_package_cache(temporary.path(), &cache, Some(&integrity))
                         })
                         .await??;
+                        profile.mark("extract_publish_ms");
                         Ok::<_, anyhow::Error>(())
                     }
                     .await;
@@ -118,6 +125,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                             &format!("deferred package prefetch {name}: {error:#}"),
                         );
                     }
+                    profile.timestamp("finished_unix");
                 }
                 .boxed_local(),
             );
@@ -206,6 +214,9 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             self.busy.remove(&document);
             match result {
                 Ok(entry) => {
+                    if self.prefetch_discovered || requests.contains(&key) {
+                        self.prefetch(&entry, &key.0);
+                    }
                     if self.discover
                         && self.scheduled.len() < 50_000
                         && entry.get("tnpmBundled").is_none()
@@ -221,7 +232,6 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                         }
                     }
                     if requests.contains(&key) {
-                        self.prefetch(&entry, &key.0);
                         memo.entry(key).or_insert(entry);
                     } else {
                         self.ready.insert(key, entry);

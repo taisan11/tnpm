@@ -98,6 +98,7 @@ docs/                      設計・仕様・開発手順
 - `registry::Query` が全表示・フィールド指定・候補全件・最新1件を区別します。install の HTTP Accept は `application/vnd.npm.install-v1+json`、`view` は `application/json` です。表示用の情報が欠落しないよう、両形式のキャッシュキーは分離します。各形式内では全レスポンスを保持し、別の selector でも保存済みデータを使用します。offline install は従来の full metadata キャッシュも読み込めます。
 - peer-free resolver は配置順を維持しながら、応答から発見した registry 依存のメタデータを最大32件まで先読みします。同じ packument の in-flight 取得は共有し、別 selector は先行取得後にローカルで解決します。workspace / overrides は投機的な依存発見を行いません。配置候補の integrity が確定すると、最大32件の tarball 取得・検証・展開済みキャッシュ登録を解決処理と重ねます。project のファイルや hook は変更せず、最終的な lockfile 検証と materialize は従来の経路です。先読みの失敗は materialize で改めて検証・報告し、optional の扱いを変えません。offline / 認証付き・no-cache / lock-only / dry-run / source・bundled 依存は tarball 先読みの対象外です。
 - 64 KiB を超える registry 応答の JSON 解析・バイナリ索引化・一時 JSON tree の解放は blocking pool で実行し、HTTP の受信を止めないようにします。キャッシュの読み込みはファイルを開いてサイズを確認し、64 KiB 以下はその場で、超える場合は開いたファイルを blocking pool に渡して実行します。どちらも同じサイズ上限・checksum・形式検証を通ります。
+- 既存 lockfile がない通常の registry 解決では、先読みした依存のバージョンが決まり次第、その tarball も先読みします。現在の依存階層のメタデータ完了を待ちません。既存 lockfile がある場合は固定バージョンを優先する従来の順序を維持します。先読みの成果物は検証済みキャッシュだけに保存し、配置・lockfile・hook の順序は変更しません。
 - `lockfile` は npm 互換 JSON を保持し、`lockfile/graph` が走査用の読み取り専用スナップショットを作ります。依存名・範囲は元の JSON から借用し、依存先・オフセット・フラグを別々の連続配列に保存します。分類が終わって借用を解放してから JSON のフラグを更新します。物理配置を変更する resolver へ永続的な索引を持ち込まず、索引の無効化漏れを避けます。
 - `manifest` / `semver` / `spec` / `fs` / `scripts` はコマンド実装に依存しません。共通処理を追加するときは、特定のコマンドを経由して呼び出さないようにします。
 - `util/style` は色、表、進捗および `view` の人間向け出力の整形をまとめます。コマンドの実行やデータ取得は担当しません。
