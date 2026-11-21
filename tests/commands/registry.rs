@@ -122,3 +122,40 @@ fn view_uses_local_manifest_scoped_selectors_and_shared_registry_cache() {
     );
     assert_eq!(f.requests.lock().unwrap().len(), requests + 1);
 }
+
+#[test]
+fn view_no_cache_resolves_ranges_without_populating_the_cache() {
+    let f = Fixture::new();
+    f.releases(
+        "app",
+        "2.0.0",
+        &[("1.10.0", ""), ("1.2.0", ""), ("2.0.0", "")],
+    );
+    let args = ["view", "app@^1", "version", "--json"];
+    let mut uncached = args.to_vec();
+    uncached.push("--no-cache");
+    let output = f.ok(&uncached);
+    assert_eq!(output, "[\n  \"1.2.0\",\n  \"1.10.0\"\n]\n");
+    let count = f.requests.lock().unwrap().len();
+    assert_eq!(f.ok(&args), output);
+    assert_eq!(f.requests.lock().unwrap().len(), count + 1);
+    assert_eq!(f.ok(&args), output);
+    assert_eq!(f.requests.lock().unwrap().len(), count + 1);
+}
+
+#[test]
+fn view_no_cache_fetches_changed_tags_without_replacing_a_fresh_cache_entry() {
+    let f = Fixture::new();
+    let args = ["view", "app", "version", "--json"];
+    f.single("app", "");
+    assert_eq!(f.ok(&args), "\"1.0.0\"\n");
+    let count = f.requests.lock().unwrap().len();
+    f.releases("app", "2.0.0", &[("2.0.0", "")]);
+    assert_eq!(
+        f.ok(&["view", "app", "version", "--json", "--no-cache"]),
+        "\"2.0.0\"\n"
+    );
+    assert_eq!(f.requests.lock().unwrap().len(), count + 1);
+    assert_eq!(f.ok(&args), "\"1.0.0\"\n");
+    assert_eq!(f.requests.lock().unwrap().len(), count + 1);
+}
