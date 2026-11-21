@@ -3,9 +3,11 @@ use crate::{cli, commands, config, install};
 use anyhow::{Context, Result, bail};
 
 pub fn run() -> Result<()> {
+    let mut profile = crate::profile::Profile::new("application");
     let Some(mut options) = cli::parse(arguments()?)? else {
         return Ok(());
     };
+    profile.mark("arguments_ms");
     if options.global {
         return crate::global::run(&options);
     }
@@ -89,6 +91,7 @@ pub fn run() -> Result<()> {
         }
     }
     let config = config::Config::load(&root, &options)?;
+    profile.mark("root_config_ms");
     if matches!(
         options.command.as_str(),
         "login" | "adduser" | "logout" | "whoami" | "pack" | "publish" | "dist-tag"
@@ -120,16 +123,23 @@ pub fn run() -> Result<()> {
         "run" => commands::run::run(&root, &options, &config),
         "init" => commands::init::run(&root, &options),
         "view" | "install" | "uninstall" | "ci" | "exec" | "create" | "outdated" | "update"
-        | "prune" | "rebuild" | "audit" => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(async {
+        | "prune" | "rebuild" | "audit" => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            profile.mark("runtime_setup_ms");
+            let result = runtime.block_on(async {
                 if options.command == "view" {
                     commands::view::run(&root, &options, &config).await
                 } else {
                     install::run(&root, &options, &config).await
                 }
-            }),
+            });
+            profile.mark("command_ms");
+            drop(runtime);
+            profile.mark("runtime_drop_ms");
+            result
+        }
         _ => bail!("unsupported command: {}", options.command),
     }
 }

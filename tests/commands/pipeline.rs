@@ -1,0 +1,781 @@
+use crate::support::Fixture;
+use std::{
+    fs,
+    io::{Read, Write},
+    net::TcpListener,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+#[test]
+fn streaming_discovery_and_archive_preparation_overlap_without_changing_placement() {
+    let f = Fixture::new();
+    f.single("seed", r#", "dependencies":{"shared":"1"}"#);
+    f.single("shared", "");
+    f.file("package.json", r#"{"dependencies":{"seed":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts", "--no-cache"]);
+    f.single("a", r#", "dependencies":{"child":"1"}"#);
+    f.single("z", r#", "dependencies":{"shared":"2"}"#);
+    f.single("slow", "");
+    f.single("marker", "");
+    f.single("child", r#", "dependencies":{"shared":"1"}"#);
+    f.releases(
+        "shared",
+        "2.0.0",
+        &[
+            ("1.0.0", ""),
+            ("1.1.0", r#", "dependencies":{"marker":"1"}"#),
+            ("2.0.0", ""),
+        ],
+    );
+    f.file(
+        "package.json",
+        r#"{"dependencies":{"a":"1","slow":"1","z":"1"}}"#,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    f.file(
+        "tnpm-lock.json",
+        &fs::read_to_string(f.root.join("tnpm-lock.json"))
+            .unwrap()
+            .replace(&f.url, &registry),
+    );
+    let routes = f
+        .routes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(path, bytes)| {
+            let bytes = if path.starts_with("/tar/") {
+                bytes.clone()
+            } else {
+                String::from_utf8(bytes.clone())
+                    .unwrap()
+                    .replace(&f.url, &registry)
+                    .into_bytes()
+            };
+            (path.clone(), bytes)
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let routes = Arc::new(routes);
+    let events = Arc::new((Mutex::new(Vec::<(String, String)>::new()), Condvar::new()));
+    let failed_gate = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (server_events, server_failed, server_stop) =
+        (events.clone(), failed_gate.clone(), stop.clone());
+    let server = thread::spawn(move || {
+        let mut workers = Vec::new();
+        while !server_stop.load(Ordering::Relaxed) {
+            let (mut socket, _) = match listener.accept() {
+                Ok(value) => value,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            let (events, failed, routes) =
+                (server_events.clone(), server_failed.clone(), routes.clone());
+            workers.push(thread::spawn(move || {
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut bytes = Vec::new();
+                let mut byte = [0];
+                while socket.read(&mut byte).unwrap_or(0) == 1 {
+                    bytes.push(byte[0]);
+                    if bytes.ends_with(b"\r\n\r\n") { break; }
+                }
+                let request = String::from_utf8(bytes).unwrap();
+                let path = request.split_whitespace().nth(1).unwrap().to_owned();
+                let (log, ready) = &*events;
+                let mut log = log.lock().unwrap();
+                log.push((path.clone(), request));
+                ready.notify_all();
+                let wait_for = match path.as_str() {
+                    "/z" => Some("/child"),
+                    "/child" => Some("/tar/a-1.0.0.tgz"),
+                    "/slow" => Some("/marker"),
+                    _ => None,
+                };
+                if let Some(expected) = wait_for {
+                    let (guard, result) = ready.wait_timeout_while(log, Duration::from_secs(5), |log| !log.iter().any(|(p, _)| p == expected)).unwrap();
+                    log = guard;
+                    if result.timed_out() { failed.store(true, Ordering::Relaxed); }
+                }
+                drop(log);
+                let (status, body) = routes.get(&path).map(|b| (200, b.as_slice())).unwrap_or((404, b"{}"));
+                let header = format!("HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nCache-Control: public, max-age=600\r\nConnection: close\r\n\r\n", body.len());
+                let _ = socket.write_all(header.as_bytes()).and_then(|_| socket.write_all(body));
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    let run = |args: &[&str]| {
+        f.command()
+            .env("npm_config_registry", &registry)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let installed = run(&["install", "--ignore-scripts"]);
+    let viewed = run(&["view", "a", "version"]);
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    assert!(
+        viewed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&viewed.stderr)
+    );
+    assert!(
+        !failed_gate.load(Ordering::Relaxed),
+        "metadata or tarball waited for a resolution wave"
+    );
+    let (events, _) = &*events;
+    let events = events.lock().unwrap();
+    assert_eq!(events.iter().filter(|(p, _)| p == "/shared").count(), 1);
+    assert_eq!(
+        events.iter().filter(|(p, _)| p == "/a").count(),
+        2,
+        "view must not reuse abbreviated metadata"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|(p, h)| p == "/a" && h.contains("application/vnd.npm.install-v1+json"))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|(p, h)| p == "/a" && h.contains("application/json"))
+    );
+    for archive in [
+        "a-1.0.0",
+        "z-1.0.0",
+        "slow-1.0.0",
+        "child-1.0.0",
+        "shared-1.0.0",
+        "shared-2.0.0",
+    ] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(p, _)| p == &format!("/tar/{archive}.tgz"))
+                .count(),
+            1
+        );
+    }
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/shared/package.json"))
+            .unwrap()
+            .contains("2.0.0")
+    );
+    assert!(
+        fs::read_to_string(
+            f.root
+                .join("node_modules/child/node_modules/shared/package.json")
+        )
+        .unwrap()
+        .contains("1.0.0")
+    );
+    assert!(!f.root.join("node_modules/marker").exists());
+    assert!(
+        !events
+            .iter()
+            .any(|(p, _)| p == "/tar/shared-1.1.0.tgz" || p == "/tar/marker-1.0.0.tgz")
+    );
+}
+
+#[test]
+fn lock_only_and_empty_graphs_do_not_prefetch_archives() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file(
+        "package.json",
+        r#"{"dependencies":{"app":"1"},"optionalDependencies":{"missing":"1"}}"#,
+    );
+    f.ok(&["install", "--package-lock-only", "--ignore-scripts"]);
+    assert!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.starts_with("/tar/"))
+    );
+    assert!(!f.root.join("node_modules").exists());
+    f.file("package.json", "{}");
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.starts_with("/tar/"))
+    );
+}
+
+#[test]
+fn discovered_archives_start_before_the_current_metadata_frontier_finishes() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"child":"1"}"#);
+    f.single("child", "");
+    f.single("z", "");
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let routes = Arc::new(
+        f.routes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(path, bytes)| {
+                let bytes = if path.starts_with("/tar/") {
+                    bytes.clone()
+                } else {
+                    String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replace(&f.url, &registry)
+                        .into_bytes()
+                };
+                (path.clone(), bytes)
+            })
+            .collect::<std::collections::HashMap<_, _>>(),
+    );
+    let events = Arc::new((Mutex::new(Vec::<String>::new()), Condvar::new()));
+    let failed = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (log, timed_out, stopped) = (events.clone(), failed.clone(), stop.clone());
+    let server = thread::spawn(move || {
+        let mut workers = Vec::new();
+        while !stopped.load(Ordering::Relaxed) {
+            let (mut socket, _) = match listener.accept() {
+                Ok(value) => value,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            let (log, timed_out, routes) = (log.clone(), timed_out.clone(), routes.clone());
+            workers.push(thread::spawn(move || {
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while socket.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") { break; }
+                }
+                let path = String::from_utf8(request).unwrap().split_whitespace().nth(1).unwrap().to_owned();
+                let (events, ready) = &*log;
+                let mut events = events.lock().unwrap();
+                events.push(path.clone());
+                ready.notify_all();
+                if path == "/z" {
+                    let (guard, result) = ready.wait_timeout_while(events, Duration::from_secs(5), |events| !events.iter().any(|p| p == "/tar/child-1.0.0.tgz")).unwrap();
+                    events = guard;
+                    if result.timed_out() { timed_out.store(true, Ordering::Relaxed); }
+                }
+                drop(events);
+                let body = &routes[&path];
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: public, max-age=600\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                socket.write_all(body).unwrap();
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    let output = f
+        .command()
+        .env("npm_config_registry", &registry)
+        .args(["install", "--ignore-scripts"])
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !failed.load(Ordering::Relaxed),
+        "discovered archive waited for the metadata frontier"
+    );
+    assert!(f.root.join("node_modules/child/package.json").exists());
+    assert_eq!(
+        events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| *p == "/tar/child-1.0.0.tgz")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn large_metadata_preserves_valid_empty_and_invalid_response_handling() {
+    for kind in ["valid", "empty", "invalid"] {
+        let f = Fixture::new();
+        f.single("app", "");
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        {
+            let mut routes = f.routes.lock().unwrap();
+            let body = routes.get_mut("/app").unwrap();
+            if kind == "empty" {
+                *body = b"{}".to_vec();
+            }
+            body.resize(body.len() + 128 * 1024, b' ');
+            if kind == "invalid" {
+                *body.last_mut().unwrap() = 0xff;
+            }
+        }
+        let output = f.invoke(&["install", "--package-lock-only", "--ignore-scripts"]);
+        assert_eq!(
+            output.status.success(),
+            kind == "valid",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if kind == "valid" {
+            assert!(f.root.join("tnpm-lock.json").exists());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(if kind == "invalid" {
+                    "not valid UTF-8"
+                } else {
+                    "cache has no versions"
+                }),
+                "{stderr}"
+            );
+            assert!(!f.root.join("tnpm-lock.json").exists());
+        }
+        assert!(!f.root.join("node_modules").exists());
+    }
+}
+
+#[test]
+fn deferred_metadata_is_complete_on_exit_and_preserves_cache_boundaries() {
+    for mode in ["public", "no-store", "authenticated", "no-cache"] {
+        let f = Fixture::new();
+        f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        {
+            let mut routes = f.routes.lock().unwrap();
+            let body = routes.get_mut("/app").unwrap();
+            body.resize(body.len() + 128 * 1024, b' ');
+        }
+        if mode == "no-store" {
+            f.cache_controls
+                .lock()
+                .unwrap()
+                .insert("/app".into(), "no-store".into());
+        }
+        if mode == "authenticated" {
+            f.file(
+                ".npmrc",
+                &format!(
+                    "{}:_authToken=fixture-only\n",
+                    f.url.strip_prefix("http:").unwrap()
+                ),
+            );
+        }
+        let mut args = vec!["install", "--package-lock-only", "--ignore-scripts"];
+        if mode == "no-cache" {
+            args.push("--no-cache");
+        }
+        f.ok(&args);
+        assert_eq!(
+            f.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| *path == "/app")
+                .count(),
+            1
+        );
+        fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+        f.file("package.json", r#"{"dependencies":{"app":"2"}}"#);
+        f.requests.lock().unwrap().clear();
+        let output = f.invoke(&[
+            "install",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--offline",
+        ]);
+        assert_eq!(
+            output.status.success(),
+            mode == "public",
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(f.requests.lock().unwrap().is_empty());
+        if mode == "public" {
+            assert!(
+                fs::read_to_string(f.root.join("tnpm-lock.json"))
+                    .unwrap()
+                    .contains("2.0.0")
+            );
+        }
+    }
+}
+
+#[test]
+fn large_metadata_reuses_pending_documents_across_selectors() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"shared":"1"}"#);
+    f.single("z", r#", "dependencies":{"shared":"2"}"#);
+    f.releases("shared", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    {
+        let mut routes = f.routes.lock().unwrap();
+        let body = routes.get_mut("/shared").unwrap();
+        body.resize(body.len() + 128 * 1024, b' ');
+    }
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    assert_eq!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| *path == "/shared")
+            .count(),
+        1
+    );
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/shared/package.json"))
+            .unwrap()
+            .contains(r#""version":"1.0.0""#)
+    );
+    assert!(
+        fs::read_to_string(
+            f.root
+                .join("node_modules/z/node_modules/shared/package.json")
+        )
+        .unwrap()
+        .contains(r#""version":"2.0.0""#)
+    );
+}
+
+#[test]
+fn streamed_archives_stay_private_until_the_complete_response_passes_integrity() {
+    for outcome in ["valid", "bad-integrity", "disconnect"] {
+        let f = Fixture::new();
+        f.single("app", "");
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        f.file("node_modules/keep/index.js", "preserved");
+        let store = f.root.join("store");
+        f.file(".npmrc", &format!("store-dir={}\n", store.display()));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let registry = format!("http://{}/", listener.local_addr().unwrap());
+        let routes = Arc::new(
+            f.routes
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(path, bytes)| {
+                    let bytes = if path.starts_with("/tar/") {
+                        bytes.clone()
+                    } else {
+                        String::from_utf8(bytes.clone())
+                            .unwrap()
+                            .replace(&f.url, &registry)
+                            .into_bytes()
+                    };
+                    (path.clone(), bytes)
+                })
+                .collect::<std::collections::HashMap<_, _>>(),
+        );
+        let observed = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (saw_stage, stopped, root, server_store) = (
+            observed.clone(),
+            stop.clone(),
+            f.root.clone(),
+            store.clone(),
+        );
+        let server = thread::spawn(move || {
+            let mut workers = Vec::new();
+            let mut gated = false;
+            while !stopped.load(Ordering::Relaxed) {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                let mut request = Vec::new();
+                let mut byte = [0];
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                while socket.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let path = String::from_utf8(request)
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .to_owned();
+                let first_archive = path.starts_with("/tar/") && !gated;
+                if first_archive {
+                    gated = true;
+                }
+                let (routes, observed, root, store) = (
+                    routes.clone(),
+                    saw_stage.clone(),
+                    root.clone(),
+                    server_store.clone(),
+                );
+                workers.push(thread::spawn(move || {
+                    let body = &routes[&path];
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: public, max-age=600\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                    if !path.starts_with("/tar/") { socket.write_all(body).unwrap(); return; }
+                    let split = body.len() - 8;
+                    socket.write_all(&body[..split]).unwrap();
+                    if first_archive {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                        while std::time::Instant::now() < deadline {
+                            let staged = fs::read_dir(store.join("packages-v2")).ok().is_some_and(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with(".prefetch-") && e.path().join("package/package.json").is_file()));
+                            if staged {
+                                assert!(!store.join("packages-v2/app@1.0.0").exists());
+                                assert_eq!(fs::read_to_string(root.join("node_modules/keep/index.js")).unwrap(), "preserved");
+                                observed.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                    }
+                    if outcome == "disconnect" { return; }
+                    let mut footer = body[split..].to_vec();
+                    if outcome == "bad-integrity" { footer[0] ^= 1; }
+                    let _ = socket.write_all(&footer);
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        let output = f
+            .command()
+            .env("npm_config_registry", &registry)
+            .args(["install", "--ignore-scripts"])
+            .output()
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(
+            observed.load(Ordering::Relaxed),
+            "{outcome}: extraction did not overlap the response body"
+        );
+        assert_eq!(
+            output.status.success(),
+            outcome == "valid",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cache = store.join("packages-v2/app@1.0.0");
+        if outcome == "valid" {
+            assert!(cache.join(".complete").is_file());
+            assert!(f.root.join("node_modules/app/package.json").is_file());
+        } else {
+            assert!(!cache.exists());
+            assert_eq!(
+                fs::read_to_string(f.root.join("node_modules/keep/index.js")).unwrap(),
+                "preserved"
+            );
+            if outcome == "bad-integrity" {
+                assert!(String::from_utf8_lossy(&output.stderr).contains("EINTEGRITY"));
+            }
+        }
+        assert!(
+            fs::read_dir(store.join("packages-v2"))
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().starts_with(".prefetch-"))
+        );
+    }
+}
+
+#[test]
+fn warm_archive_probes_keep_prefetch_counts_and_missing_cache_repairs_accurate() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"child":"1"}"#);
+    f.single("z", r#", "dependencies":{"child":"1"}"#);
+    f.single("child", "");
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    let store = f.root.join("store");
+    f.file(".npmrc", &format!("store-dir={}\n", store.display()));
+    for (round, expected) in [(0, 3), (1, 0), (2, 1), (3, 0)] {
+        if round > 0 {
+            fs::remove_dir_all(f.root.join("node_modules")).unwrap();
+            fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+            f.requests.lock().unwrap().clear();
+        }
+        if round == 2 {
+            fs::remove_dir_all(store.join("packages-v2/child@1.0.0")).unwrap();
+        }
+        if round == 3 {
+            f.file("package.json", "{}");
+        }
+        let output = f
+            .command()
+            .env("TNPM_PROFILE", "1")
+            .args(["install", "--ignore-scripts"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(output.status.success(), "{stderr}");
+        let profile = stderr
+            .lines()
+            .find(|line| line.contains("\"section\":\"resolve\""))
+            .unwrap();
+        assert!(
+            profile.contains(&format!("\"archive_packages\":{expected}")),
+            "{profile}"
+        );
+        if round == 1 || round == 3 {
+            assert!(f.requests.lock().unwrap().is_empty());
+            assert!(profile.contains("\"peak_archive_tasks\":0"), "{profile}");
+        }
+        if round == 2 {
+            assert_eq!(*f.requests.lock().unwrap(), ["/tar/child-1.0.0.tgz"]);
+            assert!(store.join("packages-v2/child@1.0.0/.complete").is_file());
+        }
+    }
+}
+
+#[test]
+fn failed_prefetch_integrity_never_replaces_installed_files() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.file("node_modules/keep/index.js", "preserved");
+    f.routes
+        .lock()
+        .unwrap()
+        .insert("/tar/app-1.0.0.tgz".into(), b"corrupt archive".to_vec());
+    let output = f.invoke(&["install", "--ignore-scripts"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("EINTEGRITY"));
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/keep/index.js")).unwrap(),
+        "preserved"
+    );
+    assert!(
+        !f.root
+            .join("home/.tnpm/cache/packages-v2/app@1.0.0/.complete")
+            .exists()
+    );
+    f.file("package.json", r#"{"optionalDependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(!f.root.join("node_modules/app").exists());
+}
+
+#[test]
+fn full_metadata_cache_still_supports_offline_resolution() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.ok(&["view", "app", "version"]);
+    let requests = f.requests.lock().unwrap().len();
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&[
+        "install",
+        "--package-lock-only",
+        "--offline",
+        "--ignore-scripts",
+    ]);
+    assert_eq!(requests, f.requests.lock().unwrap().len());
+    assert!(f.root.join("tnpm-lock.json").is_file());
+}
+
+#[test]
+fn offline_resolution_uses_full_metadata_when_abbreviated_versions_are_stale() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--package-lock-only"]);
+    f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    f.ok(&["view", "app", "version"]);
+    let requests = f.requests.lock().unwrap().len();
+    f.file("package.json", r#"{"dependencies":{"app":"2"}}"#);
+    f.ok(&["install", "--package-lock-only", "--offline"]);
+    assert!(
+        fs::read_to_string(f.root.join("tnpm-lock.json"))
+            .unwrap()
+            .contains("2.0.0")
+    );
+    f.file("package.json", r#"{"dependencies":{"app":"3"}}"#);
+    assert!(
+        !f.invoke(&["install", "--package-lock-only", "--offline"])
+            .status
+            .success()
+    );
+    assert_eq!(requests, f.requests.lock().unwrap().len());
+}
+
+#[cfg(unix)]
+#[test]
+fn hidden_lock_timestamp_ties_do_not_hide_manifest_edits() {
+    let f = Fixture::new();
+    f.file(".npmrc", "package-import-method=copy\n");
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    let modified = fs::metadata(f.root.join("node_modules/.tnpm-lock.json"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    f.file(
+        "node_modules/app/package.json",
+        r#"{"name":"app","version":"0.0.0"}"#,
+    );
+    f.file("node_modules/app/new-file", "changes directory mtime");
+    fs::File::open(f.root.join("node_modules/app"))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    f.ok(&["install", "--ignore-scripts"]);
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/app/package.json"))
+            .unwrap()
+            .contains("1.0.0")
+    );
+}
+
+#[test]
+fn isolated_index_restoration_does_not_prefetch_unused_payloads() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    fs::remove_dir_all(f.root.join("node_modules")).unwrap();
+    fs::remove_dir_all(f.root.join("home/.tnpm/cache/packages-v2")).unwrap();
+    fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+    let requests = f.requests.lock().unwrap().len();
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    assert_eq!(requests, f.requests.lock().unwrap().len());
+    assert!(!f.root.join("home/.tnpm/cache/packages-v2").exists());
+    assert!(f.root.join("node_modules/app/package.json").is_file());
+}

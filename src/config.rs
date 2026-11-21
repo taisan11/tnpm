@@ -97,6 +97,7 @@ impl Config {
                 ("cache".into(), format!("{home}/.npm")),
                 ("store-dir".into(), format!("{home}/.tnpm/cache")),
                 ("node-linker".into(), "hoisted".into()),
+                ("package-import-method".into(), "auto".into()),
                 ("toolchain-tsrs".into(), "auto".into()),
                 ("userconfig".into(), userconfig.clone()),
                 ("globalconfig".into(), globalconfig.clone()),
@@ -134,6 +135,13 @@ impl Config {
         }
         if let Some(store_dir) = &options.store_dir {
             config.set("store-dir".into(), store_dir.display().to_string());
+        }
+        if let Some(method) = &options.package_import_method {
+            config.set("package-import-method".into(), method.clone());
+        }
+        match config.get("package-import-method") {
+            Some("auto" | "hardlink" | "copy" | "clone-or-copy") => {}
+            _ => bail!("package-import-method must be auto, hardlink, copy or clone-or-copy"),
         }
         match config.get("node-linker") {
             Some("hoisted" | "isolated") => {}

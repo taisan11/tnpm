@@ -43,9 +43,13 @@ store-dir=~/.tnpm/cache
 ```
 
 - `node-linker=hoisted`（既定）: 従来どおり依存を巻き上げて配置。
+- `package-import-method=auto`（**既定**）: hoisted の共有キャッシュから reflink → hardlink → 通常コピーの順で配置します。`hardlink` は reflink を試さず、別 filesystem / ボリュームや非対応時はコピーします。`copy` は常にコピー、`clone-or-copy` は従来の reflink → コピーです。キャッシュとのファイル共有を避ける場合は **`package-import-method=copy` または `clone-or-copy`** を指定してください。`node-linker=isolated` は引き続き専用の files-v1 ハードリンク方式を使います。
 - `node-linker=isolated`: `node_modules/.tnpm/` の仮想ストアに各実体を置き、宣言された依存だけをディレクトリリンクで公開。`tnpm ci` と通常の `install` に適用。
 - `store-dir`: 全プロジェクトで共有するパッケージストアの親ディレクトリ。既定は `~/.tnpm/cache`。取得用の `packages-v2/` と、分離インストール時にファイル単位のハードリンクを作成する `files-v1/` がその下に作られます。絶対パスのみ受け付けます。ハードリンクを使うにはプロジェクトと同じディスク／ボリュームに置いてください。
 - `npm_config_node_linker` / `npm_config_store_dir` 環境変数でも変更できます。CLI の `--node-linker` / `--store-dir` が最優先です。
+- import method も `.npmrc` → `npm_config_package_import_method` → `--package-import-method` の順で上書きできます。例: `tnpm install --package-import-method=copy`。未知の値はエラーになります。
+
+auto / hardlink で共有されたファイルを install 後に直接編集すると、キャッシュと他のプロジェクトにも影響します。bin の chmod は必要な場合だけファイルをコピーしてから行います。認可された install / rebuild hook を実行する場合は、他の依存を書き換える hook に備え、実行前にグラフ全体の共有を解除します。詳しくは [インストールと lockfile](install-and-lockfile.md) を参照してください。
 
 詳しい配置方式と現在の制限は [インストールと lockfile](install-and-lockfile.md) を参照してください。
 

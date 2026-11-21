@@ -45,6 +45,21 @@ impl Profile {
             self.values.set(name, Value::Number(value.to_string()));
         }
     }
+
+    pub fn timestamp(&mut self, name: &str) {
+        if self.started.is_some() {
+            self.text(
+                name,
+                format!(
+                    "{:.6}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64()
+                ),
+            );
+        }
+    }
 }
 
 impl Drop for Profile {

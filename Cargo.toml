@@ -35,6 +35,6 @@ sha2 = "0.10"
 simdutf8 = "0.1.5"
 tar = { version = "0.4", default-features = false }
 tempfile = "3"
-tokio = { version = "1", default-features = false, features = ["rt", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time"] }
 unicode-width = { version = "0.2", default-features = false }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }

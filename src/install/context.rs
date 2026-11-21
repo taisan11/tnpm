@@ -11,6 +11,7 @@ use std::{cell::RefCell, rc::Rc};
 type PackageVersions = FxHashMap<(String, String, bool), Rc<Vec<Value>>>;
 
 pub(super) struct Context<'a> {
+    pub(super) clones: std::sync::Arc<super::store::CloneStrategy>,
     pub(super) options: &'a Options,
     pub(super) config: &'a Config,
     pub(super) progress: Progress,
@@ -25,6 +26,7 @@ pub(super) struct Context<'a> {
 impl<'a> Context<'a> {
     pub(super) fn new(options: &'a Options, config: &'a Config) -> Self {
         Self {
+            clones: std::sync::Arc::default(),
             options,
             config,
             progress: Progress::new(matches!(

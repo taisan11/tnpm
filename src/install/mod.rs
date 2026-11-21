@@ -45,6 +45,18 @@ pub(crate) async fn runtime_package(
     options: &Options,
     config: &Config,
 ) -> Result<std::path::PathBuf> {
+    let result = runtime_package_inner(project, name, selector, options, config).await;
+    crate::registry::finish_pending().await;
+    result
+}
+
+async fn runtime_package_inner(
+    project: &Path,
+    name: &str,
+    selector: &str,
+    options: &Options,
+    config: &Config,
+) -> Result<std::path::PathBuf> {
     let (target, _) = spec::registry_dependency(name, selector)?;
     let registry = config.registry_url(target.as_ref(), options.registry.as_deref())?;
     let key = format!("{name}\n{selector}\n{registry}");
@@ -137,6 +149,13 @@ fn summary(options: &Options, action: &str, count: usize) {
 }
 
 pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
+    let result = run_inner(root, options, config).await;
+    crate::registry::finish_pending().await;
+    result
+}
+
+async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()> {
+    let mut profile = crate::profile::Profile::new("install");
     if (options.offline || config.enabled("offline")) && options.no_cache {
         bail!("--offline and --no-cache cannot be combined");
     }
@@ -166,6 +185,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         bail!("ci requires package.json");
     }
     let old = Lockfile::read(root)?;
+    profile.mark("manifest_lock_read_ms");
     let mut memo = FxHashMap::default();
     if options.command == "ci" {
         let (manifest, _) = sources::effective(root, &manifest)?;
@@ -363,6 +383,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         }
     }
     let (effective, _) = sources::effective(root, &manifest)?;
+    profile.mark("setup_ms");
     let lock = resolve(
         &ctx,
         &effective,
@@ -372,6 +393,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         memo,
     )
     .await?;
+    profile.mark("resolve_ms");
     if !options.no_save {
         if options.command == "uninstall"
             || (options.command == "install" && !options.arguments.is_empty())
@@ -392,7 +414,9 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         }
         return Ok(());
     }
+    profile.mark("lock_write_ms");
     materialize(&ctx, root, &effective, &lock, false).await?;
+    profile.mark("materialize_ms");
     if let Some(before) = &before_update {
         ctx.progress.event(
             "place",
@@ -400,6 +424,13 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         );
         report::print(options, before, &tree::snapshot(&ctx, root)?);
     }
+    drop(lock);
+    drop(old);
+    drop(effective);
+    drop(manifest);
+    profile.mark("data_drop_ms");
+    drop(ctx);
+    profile.mark("context_drop_ms");
     Ok(())
 }
 
