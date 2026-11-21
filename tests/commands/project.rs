@@ -3,6 +3,73 @@ use crate::support::Fixture;
 use std::fs;
 
 #[test]
+fn ls_resolves_nested_versions_separately_and_keeps_edge_validation() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"name":"project","dependencies":{"a":"1","b":"1","c":"1"}}"#,
+    );
+    for (name, selector) in [("a", "2"), ("b", "1"), ("c", "3")] {
+        f.file(
+            &format!("node_modules/{name}/package.json"),
+            &format!(
+                r#"{{"name":"{name}","version":"1.0.0","dependencies":{{"shared":"{selector}"}}}}"#
+            ),
+        );
+    }
+    f.file(
+        "node_modules/shared/package.json",
+        r#"{"name":"shared","version":"1.0.0"}"#,
+    );
+    f.file(
+        "node_modules/a/node_modules/shared/package.json",
+        r#"{"name":"shared","version":"2.0.0"}"#,
+    );
+
+    let direct = f.ok(&["ls"]);
+    assert!(!direct.contains("shared@"));
+    let full = f.invoke(&["ls", "--all"]);
+    assert!(!full.status.success());
+    let full = String::from_utf8(full.stdout).unwrap();
+    assert!(full.contains("shared@2.0.0\n"), "{full}");
+    assert!(full.contains("shared@1.0.0\n"), "{full}");
+    assert!(full.contains("shared@1.0.0 invalid\n"), "{full}");
+    assert!(!full.contains("extraneous"), "{full}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ls_and_fund_deduplicate_symlink_targets_and_stop_at_cycles() {
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"name":"project","dependencies":{"a":"1"}}"#,
+    );
+    f.file(
+        "node_modules/a/package.json",
+        r#"{"name":"a","version":"1.0.0","dependencies":{"@scope/shared":"1"}}"#,
+    );
+    f.file("linked/shared/package.json", r#"{"name":"@scope/shared","version":"1.0.0","dependencies":{"a":"1"},"funding":"https://example.test/fund"}"#);
+    std::os::unix::fs::symlink("../linked", f.root.join("node_modules/@scope")).unwrap();
+    std::os::unix::fs::symlink("@scope/shared", f.root.join("node_modules/alias")).unwrap();
+
+    let listing = f.ok(&["ls", "--all"]);
+    assert_eq!(listing.matches("a@1.0.0").count(), 2, "{listing}");
+    assert_eq!(
+        listing.matches("@scope/shared@1.0.0").count(),
+        1,
+        "{listing}"
+    );
+    assert!(!listing.contains("extraneous"), "{listing}");
+    let funding = f.ok(&["fund", "--json"]);
+    assert_eq!(
+        funding.matches("https://example.test/fund").count(),
+        1,
+        "{funding}"
+    );
+}
+
+#[test]
 fn upgrade_rejects_arguments_without_project_or_network() {
     let f = Fixture::new();
     f.file(".npmrc", "//example.invalid/:_authToken=${MISSING_TOKEN}");

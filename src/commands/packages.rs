@@ -1,27 +1,127 @@
 use crate::{cli::Options, json::Value, manifest::read as manifest, spec};
 use anyhow::{Context, Result, bail};
+use rustc_hash::FxHashMap;
 use std::{
     collections::HashSet,
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 #[derive(Debug)]
 struct Package {
     name: String,
     version: String,
-    path: PathBuf,
-    manifest: Value,
+    installed: Option<Rc<Installed>>,
     children: Vec<Package>,
     missing: bool,
     invalid: bool,
     extraneous: bool,
 }
 
+#[derive(Debug)]
+struct Installed {
+    canonical: Rc<Path>,
+    data: Value,
+}
+
 struct Listing<'a> {
     root: &'a Path,
     manifest: &'a Value,
     lock: Option<&'a crate::lockfile::Lockfile>,
+    canonical: FxHashMap<PathBuf, Rc<Path>>,
+    packages: FxHashMap<PathBuf, Rc<Installed>>,
+    module_dirs: FxHashMap<PathBuf, bool>,
+}
+
+impl Listing<'_> {
+    fn canonical_path(&mut self, path: &Path) -> io::Result<Rc<Path>> {
+        if let Some(canonical) = self.canonical.get(path) {
+            return Ok(canonical.clone());
+        }
+        let canonical: Rc<Path> = self.resolve_canonical(path)?.into();
+        self.canonical.insert(path.into(), canonical.clone());
+        Ok(canonical)
+    }
+
+    fn resolve_canonical(&mut self, path: &Path) -> io::Result<PathBuf> {
+        // On Linux, only symlinks need realpath once the parent is resolved.
+        // Reuse the project and scope directories across sibling packages.
+        #[cfg(target_os = "linux")]
+        if path != self.root
+            && path.starts_with(self.root)
+            && let (Some(parent), Some(name)) = (path.parent(), path.file_name())
+        {
+            let candidate = self.canonical_path(parent)?.join(name);
+            if !fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
+                return Ok(candidate);
+            }
+            return fs::canonicalize(candidate);
+        }
+        fs::canonicalize(path)
+    }
+
+    fn package(&mut self, path: &Path) -> Result<Rc<Installed>> {
+        if let Some(package) = self.packages.get(path) {
+            return Ok(package.clone());
+        }
+        let mut data = manifest(path)?.context("dependency disappeared while reading")?;
+        let entry = self.lock.and_then(|lock| {
+            let location = path
+                .strip_prefix(self.root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            lock.packages
+                .get(&location)
+                .filter(|entry| entry.str("version") == data.str("version"))
+        });
+        if let Some(entry) = entry {
+            for field in ["tnpmWorkspace", "tnpmSpec"] {
+                if let Some(value) = entry.get(field) {
+                    data.set(field, value.clone());
+                }
+            }
+        }
+        crate::install::listing_overrides(self.manifest, entry, &mut data)?;
+        let package = Rc::new(Installed {
+            canonical: self.canonical_path(path)?,
+            data,
+        });
+        self.packages.insert(path.into(), package.clone());
+        Ok(package)
+    }
+
+    fn has_manifest(&self, path: &Path) -> bool {
+        self.packages.contains_key(path) || path.join("package.json").is_file()
+    }
+
+    fn resolve(&mut self, start: &Path, name: &str) -> Result<Option<PathBuf>> {
+        if !valid_name(name) {
+            bail!("invalid dependency name: {name}");
+        }
+        for ancestor in start.ancestors() {
+            if ancestor
+                .file_name()
+                .is_some_and(|name| name == "node_modules")
+            {
+                continue;
+            }
+            let dir = ancestor.join("node_modules");
+            let exists = *self
+                .module_dirs
+                .entry(ancestor.into())
+                .or_insert_with(|| dir.is_dir());
+            if exists {
+                let path = dir.join(name);
+                if self.has_manifest(&path) {
+                    return Ok(Some(path));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
 fn valid_name(name: &str) -> bool {
@@ -36,73 +136,34 @@ fn valid_name(name: &str) -> bool {
     }
 }
 
-fn resolve(root: &Path, name: &str) -> Result<Option<PathBuf>> {
-    if !valid_name(name) {
-        bail!("invalid dependency name: {name}");
-    }
-    for ancestor in root.ancestors() {
-        if ancestor
-            .file_name()
-            .is_some_and(|name| name == "node_modules")
-        {
-            continue;
-        }
-        let path = ancestor.join("node_modules").join(name);
-        if path.join("package.json").is_file() {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
-}
-
 fn build(
     path: &Path,
     name: &str,
-    mut data: Value,
+    installed: Rc<Installed>,
     root: bool,
-    stack: &mut HashSet<PathBuf>,
-    used: &mut HashSet<PathBuf>,
-    listing: &Listing<'_>,
+    stack: &mut HashSet<Rc<Path>>,
+    used: &mut HashSet<Rc<Path>>,
+    listing: &mut Listing<'_>,
 ) -> Result<Package> {
-    if !root {
-        let location = path
-            .strip_prefix(listing.root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let entry = listing
-            .lock
-            .and_then(|l| l.packages.get(&location))
-            .filter(|e| e.str("version") == data.str("version"));
-        if let Some(entry) = entry {
-            for field in ["tnpmWorkspace", "tnpmSpec"] {
-                if let Some(value) = entry.get(field) {
-                    data.set(field, value.clone());
-                }
-            }
-        }
-        crate::install::listing_overrides(listing.manifest, entry, &mut data)?;
-    }
-    let canonical = fs::canonicalize(path)?;
+    let Installed { canonical, data } = &*installed;
     used.insert(canonical.clone());
     let mut package = Package {
         name: data.str("name").unwrap_or(name).into(),
         version: data.str("version").unwrap_or("").into(),
-        path: path.into(),
-        manifest: data,
+        installed: Some(installed.clone()),
         children: Vec::new(),
         missing: false,
         invalid: false,
         extraneous: false,
     };
-    if stack.contains(&canonical) {
+    if stack.contains(canonical) {
         return Ok(package);
     }
     if stack.len() >= 128 {
         bail!("dependency nesting exceeds 128 levels");
     }
     stack.insert(canonical.clone());
-    for dep in crate::lockfile::dependencies(&package.manifest, root) {
+    for dep in crate::lockfile::dependencies(data, root) {
         let crate::lockfile::Dependency {
             name,
             spec,
@@ -126,7 +187,7 @@ fn build(
         } else {
             path
         };
-        if let Some(resolved) = resolve(start, &name)? {
+        if let Some(resolved) = listing.resolve(start, &name)? {
             let nested_peer = peer
                 && !root
                 && path
@@ -135,18 +196,17 @@ fn build(
                     .join("package.json")
                     .is_file();
             let path = resolved;
-            let data = manifest(&path)?.context("dependency disappeared while reading")?;
-            let mut child = build(&path, &name, data, false, stack, used, listing)?;
+            let installed = listing.package(&path)?;
+            let mut child = build(&path, &name, installed.clone(), false, stack, used, listing)?;
             child.invalid =
-                nested_peer || spec::satisfies(&name, &spec, &child.manifest) == Some(false);
+                nested_peer || spec::satisfies(&name, &spec, &installed.data) == Some(false);
             child.name = name;
             package.children.push(child);
         } else if !optional {
             package.children.push(Package {
                 name,
                 version: spec,
-                path: path.into(),
-                manifest: Value::object(),
+                installed: None,
                 children: Vec::new(),
                 missing: true,
                 invalid: false,
@@ -154,11 +214,11 @@ fn build(
             });
         }
     }
-    stack.remove(&canonical);
+    stack.remove(canonical);
     Ok(package)
 }
 
-fn installed(root: &Path) -> Result<Vec<(String, PathBuf)>> {
+fn installed(root: &Path, listing: &Listing<'_>) -> Result<Vec<(String, PathBuf)>> {
     let mut result = Vec::new();
     let entries = match fs::read_dir(root.join("node_modules")) {
         Ok(entries) => entries,
@@ -174,14 +234,14 @@ fn installed(root: &Path) -> Result<Vec<(String, PathBuf)>> {
         if name.starts_with('@') && entry.path().is_dir() {
             for child in fs::read_dir(entry.path())? {
                 let child = child?;
-                if child.path().join("package.json").is_file() {
+                if listing.has_manifest(&child.path()) {
                     result.push((
                         format!("{name}/{}", child.file_name().to_string_lossy()),
                         child.path(),
                     ));
                 }
             }
-        } else if entry.path().join("package.json").is_file() {
+        } else if listing.has_manifest(&entry.path()) {
             result.push((name, entry.path()));
         }
     }
@@ -193,32 +253,39 @@ fn tree(root: &Path) -> Result<Package> {
     let data = manifest(root)?.unwrap_or_else(Value::object);
     let data = crate::install::workspace_manifest(root, &data)?;
     let lock = crate::lockfile::Lockfile::read(root)?;
-    let listing = Listing {
+    let mut listing = Listing {
         root,
         manifest: &data,
         lock: lock.as_ref(),
+        canonical: FxHashMap::default(),
+        packages: FxHashMap::default(),
+        module_dirs: FxHashMap::default(),
     };
+    let project = Rc::new(Installed {
+        canonical: listing.canonical_path(root)?,
+        data: data.clone(),
+    });
     let mut used = HashSet::new();
     let mut tree = build(
         root,
         root.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-        data.clone(),
+        project,
         true,
         &mut HashSet::new(),
         &mut used,
-        &listing,
+        &mut listing,
     )?;
-    for (name, path) in installed(root)? {
-        if !used.contains(&fs::canonicalize(&path)?) {
-            let data = manifest(&path)?.context("dependency disappeared while reading")?;
+    for (name, path) in installed(root, &listing)? {
+        if !used.contains(&listing.canonical_path(&path)?) {
+            let installed = listing.package(&path)?;
             let mut child = build(
                 &path,
                 &name,
-                data,
+                installed,
                 false,
                 &mut HashSet::new(),
                 &mut used,
-                &listing,
+                &mut listing,
             )?;
             child.name = name;
             child.extraneous = true;
@@ -273,9 +340,16 @@ fn tree_json(
     value
 }
 
-fn print_tree(package: &Package, prefix: &str, depth: usize, filters: &[String]) {
+fn print_tree(
+    output: &mut impl Write,
+    package: &Package,
+    prefix: &str,
+    depth: usize,
+    filters: &[String],
+) -> io::Result<bool> {
+    let mut problems = package.missing || package.invalid;
     if depth == 0 {
-        return;
+        return Ok(problems);
     }
     let children: Vec<_> = package
         .children
@@ -296,19 +370,22 @@ fn print_tree(package: &Package, prefix: &str, depth: usize, filters: &[String])
         } else {
             ""
         };
-        println!(
+        writeln!(
+            output,
             "{prefix}{}{status}{}@{}{suffix}",
             if last { "└── " } else { "├── " },
             child.name,
             child.version
-        );
-        print_tree(
+        )?;
+        problems |= print_tree(
+            output,
             child,
             &format!("{prefix}{}", if last { "    " } else { "│   " }),
             depth - 1,
             filters,
-        );
+        )?;
     }
+    Ok(problems)
 }
 
 pub fn list(root: &Path, options: &Options) -> Result<()> {
@@ -321,16 +398,21 @@ pub fn list(root: &Path, options: &Options) -> Result<()> {
             0
         })
         .saturating_add(1);
-    let mut problems = Vec::new();
-    let mut result = tree_json(&tree, depth, &options.arguments, &mut problems);
-    result.set("name", Value::from(tree.name.as_str()));
-    if !problems.is_empty() {
-        result.set("problems", Value::Array(problems.clone()));
-    }
-    if options.json {
+    let matched = tree.children.iter().any(|p| matches(p, &options.arguments));
+    let has_problems = if options.json {
+        let mut problems = Vec::new();
+        let mut result = tree_json(&tree, depth, &options.arguments, &mut problems);
+        result.set("name", Value::from(tree.name.as_str()));
+        let has_problems = !problems.is_empty();
+        if has_problems {
+            result.set("problems", Value::Array(problems));
+        }
         println!("{}", result.pretty());
+        has_problems
     } else {
-        println!(
+        let mut output = io::BufWriter::new(io::stdout().lock());
+        writeln!(
+            output,
             "{}{} {}",
             tree.name,
             if tree.version.is_empty() {
@@ -339,19 +421,20 @@ pub fn list(root: &Path, options: &Options) -> Result<()> {
                 format!("@{}", tree.version)
             },
             root.display()
-        );
-        if tree.children.iter().any(|p| matches(p, &options.arguments)) {
-            print_tree(&tree, "", depth, &options.arguments);
+        )?;
+        let has_problems = if matched {
+            print_tree(&mut output, &tree, "", depth, &options.arguments)?
         } else {
-            println!("└── (empty)");
-        }
-    }
-    if !problems.is_empty() {
+            writeln!(output, "└── (empty)")?;
+            false
+        };
+        output.flush()?;
+        has_problems
+    };
+    if has_problems {
         bail!("ELSPROBLEMS: missing or invalid dependencies");
     }
-    if !options.arguments.is_empty()
-        && !tree.children.iter().any(|p| matches(p, &options.arguments))
-    {
+    if !options.arguments.is_empty() && !matched {
         bail!("no matching installed dependencies");
     }
     Ok(())
@@ -378,13 +461,14 @@ fn funding_urls(value: &Value, urls: &mut Vec<String>) {
     }
 }
 
-fn collect_funding(package: &Package, seen: &mut HashSet<PathBuf>, entries: &mut Value) {
-    if package.missing
-        || !seen.insert(fs::canonicalize(&package.path).unwrap_or_else(|_| package.path.clone()))
-    {
+fn collect_funding(package: &Package, seen: &mut HashSet<Rc<Path>>, entries: &mut Value) {
+    let Some(installed) = &package.installed else {
+        return;
+    };
+    if !seen.insert(installed.canonical.clone()) {
         return;
     }
-    if let Some(funding) = package.manifest.get("funding") {
+    if let Some(funding) = installed.data.get("funding") {
         let mut urls = Vec::new();
         funding_urls(funding, &mut urls);
         if !urls.is_empty() {

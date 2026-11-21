@@ -158,6 +158,7 @@ try {
     '- Bun maps view to bun info.',
     ...(fixture.live ? [] : [
       '- Bun text listings map to bun pm ls and are sourced from bun.lock; tnpm inspects installed dependencies. This is not identical work.',
+      '- The JS entry uses tnpm\'s Node.js loader versus the Bun runtime. The shell test uses a package.json script; each tool uses its default shell.',
       '- Bun listing JSON, funding and JSON version/config-report cases have no equivalent here and are not timed.',
     ]),
     '- Output formats and supported functionality are not identical (notably fund/version/full metadata); timings do not imply full npm compatibility.',
