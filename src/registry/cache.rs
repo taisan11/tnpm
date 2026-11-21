@@ -27,6 +27,11 @@ pub struct Cache {
     directory: PathBuf,
 }
 
+pub(super) enum CacheRead {
+    Ready(Option<Box<Document>>),
+    Pending(File, usize),
+}
+
 impl Clone for Cache {
     fn clone(&self) -> Self {
         Self {
@@ -51,15 +56,34 @@ impl Cache {
     }
 
     pub fn load(&self, key: &str) -> io::Result<Option<Document>> {
+        match self.prepare(key)? {
+            CacheRead::Ready(document) => Ok(document.map(|document| *document)),
+            CacheRead::Pending(file, size) => Self::read_file(file, size, key),
+        }
+    }
+
+    pub(super) fn prepare(&self, key: &str) -> io::Result<CacheRead> {
         let file = match File::open(self.path(key)) {
             Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(CacheRead::Ready(None));
+            }
             Err(error) => return Err(error),
         };
         let size = usize::try_from(file.metadata()?.len()).map_err(|_| invalid())?;
         if size > MAX_SIZE {
             return Err(invalid());
         }
+        if size <= 64 * 1024 {
+            Ok(CacheRead::Ready(
+                Self::read_file(file, size, key)?.map(Box::new),
+            ))
+        } else {
+            Ok(CacheRead::Pending(file, size))
+        }
+    }
+
+    pub(super) fn read_file(file: File, size: usize, key: &str) -> io::Result<Option<Document>> {
         let mut bytes = Vec::with_capacity(size);
         file.take(MAX_SIZE as u64 + 1).read_to_end(&mut bytes)?;
         Document::open(bytes, key)
@@ -748,6 +772,45 @@ mod tests {
             Document::open(bytes, KEY).err().unwrap().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn small_and_large_reads_keep_identity_and_corruption_checks() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Cache {
+            directory: directory.path().to_owned(),
+        };
+        assert!(matches!(
+            cache.prepare(KEY).unwrap(),
+            CacheRead::Ready(None)
+        ));
+        for size in [0, 128 * 1024] {
+            let mut value = Value::object();
+            value.set("description", Value::from("x".repeat(size).as_str()));
+            cache.store_bytes(KEY, &encoded(&value)).unwrap();
+            let document = match cache.prepare(KEY).unwrap() {
+                CacheRead::Ready(document) => {
+                    assert_eq!(size, 0);
+                    *document.unwrap()
+                }
+                CacheRead::Pending(file, length) => {
+                    assert!(size > 0);
+                    Cache::read_file(file, length, KEY).unwrap().unwrap()
+                }
+            };
+            assert_eq!(document.root().value().unwrap(), value);
+            let mut bytes = encoded(&value);
+            bytes[0] ^= 1;
+            cache.store_bytes(KEY, &bytes).unwrap();
+            assert!(cache.load(KEY).is_err());
+        }
+        OpenOptions::new()
+            .write(true)
+            .open(cache.path(KEY))
+            .unwrap()
+            .set_len(MAX_SIZE as u64 + 1)
+            .unwrap();
+        assert!(cache.prepare(KEY).is_err());
     }
 
     #[test]

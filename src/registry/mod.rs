@@ -1,6 +1,6 @@
 //! Shared HTTP/cache path for all registry-facing commands.
 use self::{
-    cache::{Cache, Document},
+    cache::{Cache, CacheRead, Document},
     http_cache::Policy,
     transport::Transport,
 };
@@ -84,16 +84,24 @@ async fn load_cached(cache: Option<&Cache>, key: &str) -> Result<Option<Rc<Docum
         return Ok(None);
     };
     let cache = cache.clone();
-    let cache_owned = cache.clone();
-    let cache_key = key.to_owned();
-    match tokio::task::spawn_blocking(move || cache_owned.load(&cache_key)).await {
-        Ok(Ok(Some(document))) => {
+    let result = match cache.prepare(key) {
+        Ok(CacheRead::Ready(document)) => Ok(document.map(|document| *document)),
+        Ok(CacheRead::Pending(file, size)) => {
+            let key = key.to_owned();
+            tokio::task::spawn_blocking(move || Cache::read_file(file, size, &key))
+                .await
+                .context("registry cache task failed")?
+        }
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(Some(document)) => {
             let document = Rc::new(document);
             remember(key, document.clone());
             Ok(Some(document))
         }
-        Ok(Ok(None)) => Ok(None),
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::InvalidData => {
+        Ok(None) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
             let cache = cache.clone();
             let cache_key = key.to_owned();
             let _ = tokio::task::spawn_blocking(move || cache.remove(&cache_key)).await;
@@ -102,13 +110,12 @@ async fn load_cached(cache: Option<&Cache>, key: &str) -> Result<Option<Rc<Docum
             ));
             Ok(None)
         }
-        Ok(Err(error)) => {
+        Err(error) => {
             crate::util::style::progress::message(format_args!(
                 "tnpm: warning: could not read registry cache for {key}: {error}"
             ));
             Ok(None)
         }
-        Err(error) => Err(error).context("registry cache task failed"),
     }
 }
 
