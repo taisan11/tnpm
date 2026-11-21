@@ -1,36 +1,67 @@
 name: Validate Rust changes
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'benchmarks/**'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/release.yml'
+      - 'LICENSE*'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'benchmarks/**'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/release.yml'
+      - 'LICENSE*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Formatting
+        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Formatting
-        run: cargo fmt --all -- --check
       - name: Check
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked --all-targets
+      - name: Installer syntax
+        run: sh -n install.sh
 
   windows-isolated:
     runs-on: windows-2025
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Verify Windows junction and hardlink implementation
         run: cargo test --locked --test commands windows_uses_directory_junctions_and_hardlinked_payloads -- --nocapture
