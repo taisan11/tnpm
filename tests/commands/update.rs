@@ -3,6 +3,38 @@ use crate::support::Fixture;
 use std::fs;
 
 #[test]
+fn isolated_update_prints_only_the_update_json_report() {
+    let f = Fixture::new();
+    f.releases("app", "1.1.0", &[("1.0.0", ""), ("1.1.0", "")]);
+    f.file("package.json", r#"{"dependencies":{"app":"1.0.0"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    f.file("package.json", r#"{"dependencies":{"app":"^1.0.0"}}"#);
+    for updated in [1, 0] {
+        let output = f.ok(&[
+            "update",
+            "--node-linker=isolated",
+            "--ignore-scripts",
+            "--json",
+        ]);
+        nojson::RawJson::parse(&output).unwrap();
+        assert!(
+            output.contains(&format!("\"updated\": {updated}")),
+            "{output}"
+        );
+        assert!(!output.contains("\"installed\":"), "{output}");
+    }
+    f.file("package.json", "{}");
+    let output = f.ok(&[
+        "update",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--json",
+    ]);
+    nojson::RawJson::parse(&output).unwrap();
+    assert!(output.contains("\"updated\""));
+}
+
+#[test]
 fn update_reports_before_after_versions_noop_and_single_json_document() {
     let f = Fixture::new();
     f.single("app", "");

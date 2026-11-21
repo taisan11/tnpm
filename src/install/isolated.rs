@@ -198,7 +198,9 @@ pub(super) async fn try_install(
     let mut hidden_value = hidden.value(manifest, true);
     hidden_value.set("tnpmBuilds", Value::object());
     crate::fs::write_json(&root.join("node_modules/.tnpm-lock.json"), &hidden_value)?;
-    super::summary(ctx.options, "installed", selected.len());
+    if ctx.options.command != "update" {
+        super::summary(ctx.options, "installed", selected.len());
+    }
     Ok(true)
 }
 
