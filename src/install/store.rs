@@ -97,32 +97,64 @@ impl CloneStrategy {
 }
 
 pub(super) fn verify(bytes: &[u8], integrity: Option<&str>) -> Result<()> {
-    let Some(integrity) = integrity else {
-        return Ok(());
-    };
-    // As in SRI, prefer the strongest algorithm present; a weak match cannot mask a bad SHA-512.
-    for algorithm in ["sha512", "sha256", "sha1"] {
-        let hashes: Vec<_> = integrity
-            .split_whitespace()
-            .filter_map(|s| s.split_once('-'))
-            .filter(|(a, _)| *a == algorithm)
-            .map(|(_, s)| s.split('?').next().unwrap_or(s))
-            .collect();
-        if hashes.is_empty() {
-            continue;
-        }
-        let actual = match algorithm {
-            "sha512" => STANDARD.encode(Sha512::digest(bytes)),
-            "sha256" => STANDARD.encode(Sha256::digest(bytes)),
-            _ => STANDARD.encode(sha1::Sha1::digest(bytes)),
+    let mut verifier = IntegrityVerifier::new(integrity)?;
+    verifier.update(bytes);
+    verifier.finish()
+}
+
+struct IntegrityVerifier<'a> {
+    hasher: Option<Box<dyn sha2::digest::DynDigest>>,
+    hashes: Vec<&'a str>,
+}
+
+impl<'a> IntegrityVerifier<'a> {
+    fn new(integrity: Option<&'a str>) -> Result<Self> {
+        let Some(integrity) = integrity else {
+            return Ok(Self {
+                hasher: None,
+                hashes: Vec::new(),
+            });
         };
-        ensure!(
-            hashes.contains(&actual.as_str()),
-            "EINTEGRITY: tarball checksum mismatch"
-        );
-        return Ok(());
+        // As in SRI, prefer the strongest algorithm present; a weak match cannot mask a bad SHA-512.
+        for algorithm in ["sha512", "sha256", "sha1"] {
+            let hashes: Vec<_> = integrity
+                .split_whitespace()
+                .filter_map(|s| s.split_once('-'))
+                .filter(|(a, _)| *a == algorithm)
+                .map(|(_, s)| s.split('?').next().unwrap_or(s))
+                .collect();
+            if hashes.is_empty() {
+                continue;
+            }
+            let hasher: Box<dyn sha2::digest::DynDigest> = match algorithm {
+                "sha512" => Box::new(Sha512::new()),
+                "sha256" => Box::new(Sha256::new()),
+                _ => Box::new(sha1::Sha1::new()),
+            };
+            return Ok(Self {
+                hasher: Some(hasher),
+                hashes,
+            });
+        }
+        bail!("unsupported tarball integrity algorithm")
     }
-    bail!("unsupported tarball integrity algorithm")
+
+    fn update(&mut self, bytes: &[u8]) {
+        if let Some(hasher) = &mut self.hasher {
+            hasher.update(bytes);
+        }
+    }
+
+    fn finish(self) -> Result<()> {
+        if let Some(hasher) = self.hasher {
+            let actual = STANDARD.encode(hasher.finalize());
+            ensure!(
+                self.hashes.contains(&actual.as_str()),
+                "EINTEGRITY: tarball checksum mismatch"
+            );
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn package_cache_path(ctx: &Context<'_>, entry: &Value, path: &str) -> Option<PathBuf> {
@@ -569,12 +601,29 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
             return Ok(bytes);
         }
     }
-    let authorization = ctx.config.authorization(&url)?;
+    let response = tarball_response(ctx, &url, name).await?;
+    let bytes = response.bytes().await?.to_vec();
+    verify(&bytes, integrity)?;
+    if entry
+        .str("tnpmSpec")
+        .is_some_and(super::sources::is_tarball)
+    {
+        remember_source_tarball(ctx, entry, &bytes)?;
+    }
+    Ok(bytes)
+}
+
+async fn tarball_response(
+    ctx: &Context<'_>,
+    url: &reqwest::Url,
+    name: &str,
+) -> Result<reqwest::Response> {
+    let authorization = ctx.config.authorization(url)?;
     if ctx.offline() {
-        bail!("ENOTCACHED: tarball {resolved}");
+        bail!("ENOTCACHED: tarball {url}");
     }
     let mut request = ctx
-        .client(&url, true)?
+        .client(url, true)?
         .get(url.clone())
         .header(reqwest::header::ACCEPT_ENCODING, "identity");
     if ctx.options.no_cache {
@@ -589,15 +638,109 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
     if response.status() != reqwest::StatusCode::OK {
         bail!("unexpected tarball HTTP status: {}", response.status());
     }
-    let bytes = response.bytes().await?.to_vec();
-    verify(&bytes, integrity)?;
-    if entry
-        .str("tnpmSpec")
-        .is_some_and(super::sources::is_tarball)
-    {
-        remember_source_tarball(ctx, entry, &bytes)?;
+    Ok(response)
+}
+
+pub(super) async fn prefetch_package(
+    ctx: &Context<'_>,
+    entry: &Value,
+    name: &str,
+    cache: PathBuf,
+) -> Result<()> {
+    let mut profile = crate::profile::Profile::new("archive");
+    profile.text("name", name);
+    profile.timestamp("started_unix");
+    let mut verifier = IntegrityVerifier::new(entry.str("integrity"))?;
+    let resolved = entry
+        .str("resolved")
+        .context("lockfile package has no resolved tarball URL")?;
+    let url = reqwest::Url::parse(resolved)?;
+    ensure!(
+        matches!(url.scheme(), "http" | "https")
+            && url.username().is_empty()
+            && url.password().is_none(),
+        "only HTTP(S) tarballs without URL credentials are supported"
+    );
+    let mut response = tarball_response(ctx, &url, name).await?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(8);
+    let parent = cache
+        .parent()
+        .context("package cache path has no parent")?
+        .to_owned();
+    ctx.progress
+        .event("prepare", &format!("extract node_modules/{name}"));
+    let extracted = tokio::task::spawn_blocking(move || -> Result<tempfile::TempDir> {
+        fs::create_dir_all(&parent)?;
+        let temporary = tempfile::Builder::new()
+            .prefix(".prefetch-")
+            .tempdir_in(parent)?;
+        let payload = temporary.path().join("package");
+        fs::create_dir(&payload)?;
+        unpack_reader(
+            ChunkReader {
+                receiver,
+                current: Cursor::new(Vec::new()),
+            },
+            &payload,
+        )?;
+        Ok(temporary)
+    });
+    let mut sender = Some(sender);
+    let downloaded = async {
+        while let Some(chunk) = response.chunk().await? {
+            verifier.update(&chunk);
+            for part in chunk.chunks(64 * 1024) {
+                let Some(channel) = &sender else {
+                    break;
+                };
+                if channel.send(part.to_vec()).await.is_err() {
+                    sender = None;
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(())
     }
-    Ok(bytes)
+    .await;
+    drop(sender);
+    profile.mark("download_ms");
+    let extracted = extracted
+        .await
+        .context("streamed package extraction task failed")?;
+    downloaded?;
+    verifier.finish()?;
+    let temporary = extracted?;
+    profile.mark("verify_extract_tail_ms");
+    let integrity = entry.str("integrity").map(str::to_owned);
+    tokio::task::spawn_blocking(move || {
+        publish_package_cache(temporary.path(), &cache, integrity.as_deref())
+    })
+    .await??;
+    profile.mark("publish_ms");
+    profile.timestamp("finished_unix");
+    Ok(())
+}
+
+struct ChunkReader {
+    receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    current: Cursor<Vec<u8>>,
+}
+
+impl Read for ChunkReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let count = self.current.read(output)?;
+            if count > 0 {
+                return Ok(count);
+            }
+            let Some(chunk) = self.receiver.blocking_recv() else {
+                return Ok(0);
+            };
+            self.current = Cursor::new(chunk);
+        }
+    }
 }
 
 fn source_tarball_cache(ctx: &Context<'_>, entry: &Value) -> Option<PathBuf> {
@@ -679,10 +822,18 @@ pub(super) fn safe_relative(path: &Path) -> bool {
 }
 
 pub(super) fn unpack(bytes: &[u8], dest: &Path) -> Result<()> {
-    let reader: Box<dyn Read> = if bytes.starts_with(&[0x1f, 0x8b]) {
-        Box::new(flate2::read::GzDecoder::new(bytes))
+    unpack_reader(Cursor::new(bytes), dest)
+}
+
+fn unpack_reader(mut reader: impl Read, dest: &Path) -> Result<()> {
+    let mut prefix = Vec::with_capacity(2);
+    reader.by_ref().take(2).read_to_end(&mut prefix)?;
+    let gzip = prefix.starts_with(&[0x1f, 0x8b]);
+    let reader = Cursor::new(prefix).chain(reader);
+    let reader: Box<dyn Read + '_> = if gzip {
+        Box::new(flate2::read::GzDecoder::new(reader))
     } else {
-        Box::new(Cursor::new(bytes))
+        Box::new(reader)
     };
     let mut archive = tar::Archive::new(reader);
     archive.set_preserve_permissions(false);
@@ -730,6 +881,54 @@ pub(super) fn unpack(bytes: &[u8], dest: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streamed_integrity_matches_whole_archive_verification() {
+        let bytes = b"package archive";
+        for (algorithm, hash) in [
+            ("sha512", STANDARD.encode(Sha512::digest(bytes))),
+            ("sha256", STANDARD.encode(Sha256::digest(bytes))),
+            ("sha1", STANDARD.encode(sha1::Sha1::digest(bytes))),
+        ] {
+            let integrity = format!("{algorithm}-incorrect {algorithm}-{hash}?option");
+            for size in [1, 3, 64] {
+                let mut verifier = IntegrityVerifier::new(Some(&integrity)).unwrap();
+                for chunk in bytes.chunks(size) {
+                    verifier.update(chunk);
+                }
+                verifier.finish().unwrap();
+            }
+            let mut verifier = IntegrityVerifier::new(Some(&integrity)).unwrap();
+            verifier.update(&bytes[..3]);
+            assert!(verifier.finish().is_err());
+        }
+        IntegrityVerifier::new(None).unwrap().finish().unwrap();
+        assert!(IntegrityVerifier::new(Some("md5-value")).is_err());
+        let mut verifier = IntegrityVerifier::new(Some("sha512-incorrect")).unwrap();
+        verifier.update(b"");
+        assert!(verifier.finish().is_err());
+    }
+
+    #[test]
+    fn chunk_reader_handles_empty_buffers_chunks_and_closed_streams() {
+        for chunks in [vec![], vec![b"".to_vec(), b"a".to_vec(), b"bc".to_vec()]] {
+            let (sender, receiver) = tokio::sync::mpsc::channel(4);
+            let expected = chunks.concat();
+            for chunk in chunks {
+                sender.blocking_send(chunk).unwrap();
+            }
+            drop(sender);
+            let mut reader = ChunkReader {
+                receiver,
+                current: Cursor::new(Vec::new()),
+            };
+            assert_eq!(reader.read(&mut []).unwrap(), 0);
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, expected);
+            assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+        }
+    }
+
     #[test]
     fn integrity_prefers_strongest_hash() {
         let data = b"hello";

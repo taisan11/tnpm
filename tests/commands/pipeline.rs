@@ -369,6 +369,153 @@ fn large_metadata_preserves_valid_empty_and_invalid_response_handling() {
 }
 
 #[test]
+fn streamed_archives_stay_private_until_the_complete_response_passes_integrity() {
+    for outcome in ["valid", "bad-integrity", "disconnect"] {
+        let f = Fixture::new();
+        f.single("app", "");
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        f.file("node_modules/keep/index.js", "preserved");
+        let store = f.root.join("store");
+        f.file(".npmrc", &format!("store-dir={}\n", store.display()));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let registry = format!("http://{}/", listener.local_addr().unwrap());
+        let routes = Arc::new(
+            f.routes
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(path, bytes)| {
+                    let bytes = if path.starts_with("/tar/") {
+                        bytes.clone()
+                    } else {
+                        String::from_utf8(bytes.clone())
+                            .unwrap()
+                            .replace(&f.url, &registry)
+                            .into_bytes()
+                    };
+                    (path.clone(), bytes)
+                })
+                .collect::<std::collections::HashMap<_, _>>(),
+        );
+        let observed = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (saw_stage, stopped, root, server_store) = (
+            observed.clone(),
+            stop.clone(),
+            f.root.clone(),
+            store.clone(),
+        );
+        let server = thread::spawn(move || {
+            let mut workers = Vec::new();
+            let mut gated = false;
+            while !stopped.load(Ordering::Relaxed) {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                let mut request = Vec::new();
+                let mut byte = [0];
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                while socket.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let path = String::from_utf8(request)
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .to_owned();
+                let first_archive = path.starts_with("/tar/") && !gated;
+                if first_archive {
+                    gated = true;
+                }
+                let (routes, observed, root, store) = (
+                    routes.clone(),
+                    saw_stage.clone(),
+                    root.clone(),
+                    server_store.clone(),
+                );
+                workers.push(thread::spawn(move || {
+                    let body = &routes[&path];
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: public, max-age=600\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                    if !path.starts_with("/tar/") { socket.write_all(body).unwrap(); return; }
+                    let split = body.len() - 8;
+                    socket.write_all(&body[..split]).unwrap();
+                    if first_archive {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                        while std::time::Instant::now() < deadline {
+                            let staged = fs::read_dir(store.join("packages-v2")).ok().is_some_and(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with(".prefetch-") && e.path().join("package/package.json").is_file()));
+                            if staged {
+                                assert!(!store.join("packages-v2/app@1.0.0").exists());
+                                assert_eq!(fs::read_to_string(root.join("node_modules/keep/index.js")).unwrap(), "preserved");
+                                observed.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                    }
+                    if outcome == "disconnect" { return; }
+                    let mut footer = body[split..].to_vec();
+                    if outcome == "bad-integrity" { footer[0] ^= 1; }
+                    let _ = socket.write_all(&footer);
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        let output = f
+            .command()
+            .env("npm_config_registry", &registry)
+            .args(["install", "--ignore-scripts"])
+            .output()
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(
+            observed.load(Ordering::Relaxed),
+            "{outcome}: extraction did not overlap the response body"
+        );
+        assert_eq!(
+            output.status.success(),
+            outcome == "valid",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cache = store.join("packages-v2/app@1.0.0");
+        if outcome == "valid" {
+            assert!(cache.join(".complete").is_file());
+            assert!(f.root.join("node_modules/app/package.json").is_file());
+        } else {
+            assert!(!cache.exists());
+            assert_eq!(
+                fs::read_to_string(f.root.join("node_modules/keep/index.js")).unwrap(),
+                "preserved"
+            );
+            if outcome == "bad-integrity" {
+                assert!(String::from_utf8_lossy(&output.stderr).contains("EINTEGRITY"));
+            }
+        }
+        assert!(
+            fs::read_dir(store.join("packages-v2"))
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().starts_with(".prefetch-"))
+        );
+    }
+}
+
+#[test]
 fn failed_prefetch_integrity_never_replaces_installed_files() {
     let f = Fixture::new();
     f.single("app", "");

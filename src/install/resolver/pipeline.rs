@@ -91,31 +91,11 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             let ctx = self.ctx;
             self.preparing.push(
                 async move {
-                    let mut profile = crate::profile::Profile::new("archive");
-                    profile.text("name", name.as_str());
-                    profile.timestamp("started_unix");
                     let result = async {
                         let cache =
                             store::package_cache_path(ctx, &entry, &format!("node_modules/{name}"))
                                 .unwrap();
-                        let bytes = store::tarball(ctx, &entry, &name).await?;
-                        profile.mark("download_ms");
-                        ctx.progress
-                            .event("prepare", &format!("extract node_modules/{name}"));
-                        let integrity = entry.str("integrity").unwrap().to_owned();
-                        tokio::task::spawn_blocking(move || -> Result<()> {
-                            let parent = cache.parent().unwrap();
-                            std::fs::create_dir_all(parent)?;
-                            let temporary = tempfile::Builder::new()
-                                .prefix(".prefetch-")
-                                .tempdir_in(parent)?;
-                            let payload = temporary.path().join("package");
-                            std::fs::create_dir(&payload)?;
-                            store::unpack(&bytes, &payload)?;
-                            store::publish_package_cache(temporary.path(), &cache, Some(&integrity))
-                        })
-                        .await??;
-                        profile.mark("extract_publish_ms");
+                        store::prefetch_package(ctx, &entry, &name, cache).await?;
                         Ok::<_, anyhow::Error>(())
                     }
                     .await;
@@ -125,7 +105,6 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                             &format!("deferred package prefetch {name}: {error:#}"),
                         );
                     }
-                    profile.timestamp("finished_unix");
                 }
                 .boxed_local(),
             );
