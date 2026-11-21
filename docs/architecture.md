@@ -11,6 +11,8 @@ src/
   config/http.rs           共通のレジストリ選択・スコープ別認証・TLS 設定
   config/credentials.rs    user npmrc の秘密情報の atomic な保存・削除
   commands/
+    mod.rs                 利用者向けコマンドのモジュール定義
+    alias.rs               tnpm が所有するシェル設定ブロックの作成・削除
     auth.rs                login / adduser / logout / whoami
     publish.rs             pack / publish / dist-tag と公開メタデータ
     publish/pack.rs         ファイル選択・決定的な tarball の生成
@@ -22,6 +24,7 @@ src/
     workspace_run.rs       workspace スクリプトの並列・依存順実行
     run.rs                 run コマンドと pre/post フック
     version.rs             version コマンド、ファイル更新・Git 操作
+    upgrade.rs             公式リリースの取得・チェックサム検証・実行ファイル更新
     view.rs                view コマンド、フィールド選択
   install/
     mod.rs                 install / ci / update / uninstall / exec / outdated の制御
@@ -37,6 +40,9 @@ src/
     resolver.rs            通常依存のバージョン解決と物理配置
     resolver/peers.rs       peer set の配置・バージョン探索
     store.rs               tarball の取得・検証・安全な展開・展開済みキャッシュ
+    isolated.rs            仮想ストアと宣言依存だけを公開する分離配置
+    hardlinks.rs           ファイル内容別ストアへの保存とハードリンク配置
+    junction.rs            管理者権限を使わない Windows ディレクトリ Junction
     tree.rs                node_modules の走査・配置・削除・bin・フック、prune
   registry/
     mod.rs                 メタデータ取得・再検証・バージョン選択
@@ -49,10 +55,17 @@ src/
   semver.rs                semver crate による解析・比較と npm 範囲・増分
   spec.rs                  パッケージ名とバージョン／タグ／範囲指定の解析
   jsr.rs                   jsr: 指定と公式 npm 互換名への変換
-  runner/remote.rs          HTTP(S) ソース取得・検証・private cache と隔離パッケージ解決
-  runner/bridge.rs          Node 同期フック用の常駐ブリッジ（フレーム化 JSON、結果メモ化）
+  runner/
+    mod.rs                 直接ファイル実行用 Node プロセスと内部コマンドの起動
+    oxc.rs                 JavaScript / TypeScript の変換・モジュール解決
+    commonjs.rs            AST・意味解析に基づく ESM から CommonJS への変換
+    loader.mjs             Node 同期モジュールフックとブリッジへの要求
+    remote.rs              HTTP(S) ソース取得・検証・private cache と隔離パッケージ解決
+    bridge.rs              Node 同期フック用の常駐ブリッジ（フレーム化 JSON、結果メモ化）
+  toolchain.rs             package script の tsc shim と tsrs の展開・起動
   workspaces.rs            symlink を辿らない workspace 探索・選択
   global.rs                ユーザー領域のグローバル配置・bin の所有管理
+  util/mod.rs              共通ユーティリティのモジュール定義
   util/style/
     mod.rs                 colored による stdout / stderr 別の色制御
     table.rs               Unicode 表示幅に基づく表の整形

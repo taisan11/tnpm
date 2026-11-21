@@ -10,7 +10,7 @@
 - `phf`（`macros`）: コマンドのエイリアスと npmrc の固定キーを、コンパイル時に生成する Map / Set で検索します。ヘルプの表示順や、利用者が変更する設定の格納方法は維持します。
 - `simdutf8`（標準 feature）: レジストリ応答の UTF-8 を `compat` API で検証し、本文全体を String へコピーせず `nojson` に渡します。バイナリキャッシュの共有文字列プールは `basic` API で一度だけ検証します。対応 CPU の SIMD をライブラリ側で選択し、CPU 固有のビルドフラグは強制しません。
 - `xxhash-rust`（`xxh3` のみ）: レジストリキャッシュの偶発的な破損を XXH3-128 で検出します。認証用途ではなく、tarball の暗号学的な SRI 検証は変更しません。追加の CPU 固有ビルドフラグは強制しません。
-- `reqwest`: デフォルト feature（HTTPS/rustls、HTTP/2、charset、system-proxy）に加え、`gzip`・`brotli`・`deflate`・`zstd` を有効化。対応形式を `Accept-Encoding` で送信し、レスポンスを自動展開します。`json` / `blocking` は有効にせず、JSON は引き続き `nojson` で処理します。
+- `reqwest`: `default-features = false` とし、`default-tls`（HTTPS/rustls）・`http2`・`system-proxy`・`gzip`・`brotli`・`deflate`・`zstd` を明示的に有効化します。対応形式を `Accept-Encoding` で送信し、レスポンスを自動展開します。`charset` / `json` / `blocking` は有効にせず、JSON は引き続き `nojson` で処理します。
 - `tokio`: `default-features = false`、直接指定は `rt` / `time`。Web ログインの完了待ちにタイマーを使用します。通信に必要なネットワーク feature は reqwest 経由で有効になります。シングルスレッド async runtime と展開用の blocking pool を使用します。
 - `dirs`: `home_dir()` で `~/.tnpm/cache` の基準となるホームディレクトリを取得します。
 - `httpdate`: HTTP の `Date` / `Expires` / `Last-Modified` を解析します（追加の依存先なし）。
@@ -18,5 +18,10 @@
 - `tar` / `flate2`: Rust 内で tar/gzip 展開と公開用 tarball の生成。`sha2` / `sha1` / `base64`: SRI integrity 検証、キャッシュキー生成、公開メタデータ。
 - `ignore`: pack / publish の `files` と `.npmignore` / `.gitignore` パターンの照合。
 - `rpassword`: legacy ログインの端末上のパスワード入力を非表示にします。
+- `oxc_*`: ランナーの JavaScript / TypeScript の解析・変換・コード生成・モジュール解決と、AST・意味解析に基づく CommonJS 変換に使用します。
+- `glob`: workspace の探索パターンと、pack / publish の `files` パターンを照合します。
+- `semver`: バージョンの解析・比較と範囲判定の基盤です。npm 形式の範囲指定やバージョン増分は `src/semver.rs` で扱います。
+- `self-replace`: `upgrade` で検証済みの実行ファイルを使って tnpm 自身を置き換えます。
+- `tempfile`: ソース依存の一時展開、設定・キャッシュ・tarball の一時ファイル経由の保存、tsrs 用の一時 shim に使用します。
 - `libc`: Linux の `FICLONE` ioctl。macOS は `clonefile` を直接呼び出し、どちらも clone 非対応時は通常コピーにフォールバックします。
 - `unicode-width`（デフォルト feature なし）: `outdated` と `update` の表を文字列の表示幅で揃えます。

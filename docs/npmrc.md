@@ -83,7 +83,7 @@ store-dir=~/.tnpm/cache
 }
 ```
 
-組み込みの `@jsr:registry=https://npm.jsr.io/`（npmrc / `--registry` で上書き可）を使用して `@jsr/taisan11__vite-plugin-budoux-build` を取得し、`node_modules/@taisan11/vite-plugin-budoux-build` に配置します。エイリアス名をレジストリには問い合わせません。
+組み込みの既定値 `@jsr:registry=https://npm.jsr.io/` を使用して `@jsr/taisan11__vite-plugin-budoux-build` を取得し、`node_modules/@taisan11/vite-plugin-budoux-build` に配置します。取得先を変更する場合は npmrc の `@jsr:registry` を設定してください。`--registry` では変更しません。エイリアス名をレジストリには問い合わせません。
 
 `outdated` はエイリアス名を表・JSON のキーとして保ち、参照先の declared range から wanted、参照先の `latest` タグから latest を調べます。current はエイリアス名のインストール先から読み、存在しなければ `MISSING` です。`MISSING` 自体は `.npmrc` のエラーではありません。
 

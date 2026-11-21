@@ -20,11 +20,3 @@ npm 全体の完全な互換実装ではありません。`audit fix`、Quick Au
 - `install` / `uninstall` / `update` / `outdated` / `ls` の `-g` に対応します。既定 prefix は npm と異なる `~/.tnpm/global` です。PATH は変更しません。
 
 詳細は [workspaces と依存ソース](dependency-sources.md) を参照してください。peer の機能は対応していますが npm Arborist のすべての配置・バージョン選択順との一致を保証するものではありません。主に macOS/Linux 向けで Windows の bin shim は簡易版です。Windows の workspace リンクには Developer Mode などの symlink 作成権限が必要です。JSON は通常2スペースで再整形しますが、独自 lockfile のパッケージ行はコンパクトに出力します。`fund --json` は名前でまとめたフラットな一覧です。スクリプトや Git 操作失敗後は、npm と同様に変更が残る場合があります。
-
-```sh
-cargo fmt --all -- --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
-```
-
-テストのレジストリ通信にはローカル HTTP サーバーを使い、実際の npm レジストリには接続しません。
