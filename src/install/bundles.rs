@@ -31,7 +31,8 @@ pub(super) async fn hydrate(ctx: &Context<'_>, mut data: Value) -> Result<Value>
         .and_then(|p| store::cached_package(p, entry.str("integrity")))
     {
         let destination = directory.clone();
-        tokio::task::spawn_blocking(move || store::clone_tree(&cached, &destination))
+        let clones = ctx.clones.clone();
+        tokio::task::spawn_blocking(move || clones.clone_tree(&cached, &destination))
             .await
             .context("bundled package clone task failed")??;
     } else if !sources::prepare(ctx, &entry, &directory).await? {
@@ -42,7 +43,12 @@ pub(super) async fn hydrate(ctx: &Context<'_>, mut data: Value) -> Result<Value>
             .await
             .context("bundled package extract task failed")??;
         if let Some(cache) = cache {
-            store::cache_extracted_package(&directory, &cache, entry.str("integrity"))?;
+            store::cache_extracted_package(
+                &directory,
+                &cache,
+                entry.str("integrity"),
+                &ctx.clones,
+            )?;
         }
     }
     let mut packages = Value::object();
@@ -201,7 +207,8 @@ pub(super) async fn prepare(ctx: &Context<'_>, entry: &Value, destination: &Path
             store::package_cache_path(ctx, root, root.str("name").unwrap_or("bundle"))
         && let Some(package) = store::cached_package(&cache, root.str("integrity"))
     {
-        store::clone_tree(&package.join(relative), destination)?;
+        ctx.clones
+            .clone_tree(&package.join(relative), destination)?;
         return Ok(true);
     }
     let temp = tempfile::tempdir()?;
@@ -213,7 +220,7 @@ pub(super) async fn prepare(ctx: &Context<'_>, entry: &Value, destination: &Path
         fs::create_dir(&parent)?;
         store::unpack(&bytes, &parent)?;
     }
-    store::clone_tree(&parent.join(relative), destination)?;
+    ctx.clones.clone_tree(&parent.join(relative), destination)?;
     Ok(true)
 }
 

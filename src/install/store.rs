@@ -4,12 +4,59 @@ use crate::{fs::unique, json::Value};
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256, Sha512};
+#[cfg(target_os = "linux")]
+use std::{collections::HashMap, os::unix::fs::MetadataExt, sync::Mutex};
 use std::{
     collections::HashSet,
     fs,
     io::{Cursor, Read, Write},
     path::{Component, Path, PathBuf},
 };
+
+#[derive(Default)]
+pub(super) struct CloneStrategy {
+    #[cfg(target_os = "linux")]
+    devices: Mutex<HashMap<(u64, u64), bool>>,
+}
+
+impl CloneStrategy {
+    fn supported(&self, source: &Path, destination: &Path) -> std::io::Result<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            let parent = destination.parent().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "missing destination parent",
+                )
+            })?;
+            let key = (fs::metadata(source)?.dev(), fs::metadata(parent)?.dev());
+            let mut devices = self.devices.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(supported) = devices.get(&key) {
+                return Ok(*supported);
+            }
+            let input = fs::File::open(source)?;
+            let output = tempfile::NamedTempFile::new_in(parent)?;
+            let supported = match reflink(&input, output.as_file()) {
+                Ok(()) => true,
+                Err(error) => !matches!(
+                    error.raw_os_error(),
+                    Some(libc::EOPNOTSUPP | libc::ENOTTY | libc::EXDEV)
+                ),
+            };
+            devices.insert(key, supported);
+            Ok(supported)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (source, destination);
+            Ok(true)
+        }
+    }
+
+    pub(super) fn clone_tree(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        clone_tree(source, destination, self)
+    }
+}
 
 pub(super) fn verify(bytes: &[u8], integrity: Option<&str>) -> Result<()> {
     let Some(integrity) = integrity else {
@@ -107,25 +154,27 @@ fn clone_file(source: &Path, destination: &Path) -> std::io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn clone_file(source: &Path, destination: &Path) -> std::io::Result<bool> {
+fn reflink(source: &fs::File, destination: &fs::File) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
+    // Linux FICLONE: clone file data using the destination filesystem's
+    // copy-on-write implementation (e.g. Btrfs, XFS, or APFS-compatible FUSE).
+    const FICLONE: libc::c_ulong = 0x4004_9409;
+    let result = unsafe { libc::ioctl(destination.as_raw_fd(), FICLONE, source.as_raw_fd()) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn clone_file(source: &Path, destination: &Path) -> std::io::Result<bool> {
     let source_file = fs::File::open(source)?;
     let destination_file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(destination)?;
-    // Linux FICLONE: clone file data using the destination filesystem's
-    // copy-on-write implementation (e.g. Btrfs, XFS, or APFS-compatible FUSE).
-    const FICLONE: libc::c_ulong = 0x4004_9409;
-    let result = unsafe {
-        libc::ioctl(
-            destination_file.as_raw_fd(),
-            FICLONE,
-            source_file.as_raw_fd(),
-        )
-    };
-    drop(destination_file);
-    if result == 0 {
+    if reflink(&source_file, &destination_file).is_ok() {
         fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
         Ok(true)
     } else {
@@ -163,7 +212,7 @@ fn validate_cloned_tree(path: &Path, depth: usize) -> std::io::Result<()> {
     Ok(())
 }
 
-pub(super) fn clone_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+fn clone_tree(source: &Path, destination: &Path, strategy: &CloneStrategy) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     if fs::symlink_metadata(source).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         && clone_file(source, destination)?
@@ -175,10 +224,16 @@ pub(super) fn clone_tree(source: &Path, destination: &Path) -> std::io::Result<(
         }
         return Ok(());
     }
-    clone_tree_files(source, destination, 0)
+    clone_tree_files(source, destination, 0, None, strategy)
 }
 
-fn clone_tree_files(source: &Path, destination: &Path, depth: usize) -> std::io::Result<()> {
+fn clone_tree_files(
+    source: &Path,
+    destination: &Path,
+    depth: usize,
+    supported: Option<bool>,
+    strategy: &CloneStrategy,
+) -> std::io::Result<()> {
     if depth > 128 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -188,12 +243,19 @@ fn clone_tree_files(source: &Path, destination: &Path, depth: usize) -> std::io:
     let metadata = fs::symlink_metadata(source)?;
     if metadata.is_dir() && !metadata.file_type().is_symlink() {
         fs::create_dir(destination)?;
+        let mut supported = supported;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
+            if supported.is_none() && entry.file_type()?.is_file() {
+                supported =
+                    Some(strategy.supported(&entry.path(), &destination.join(entry.file_name()))?);
+            }
             clone_tree_files(
                 &entry.path(),
                 &destination.join(entry.file_name()),
                 depth + 1,
+                supported,
+                strategy,
             )?;
         }
         fs::set_permissions(destination, metadata.permissions())?;
@@ -205,7 +267,11 @@ fn clone_tree_files(source: &Path, destination: &Path, depth: usize) -> std::io:
             "package cache contains a link or special file",
         ));
     }
-    if !clone_file(source, destination)? {
+    let supported = match supported {
+        Some(supported) => supported,
+        None => strategy.supported(source, destination)?,
+    };
+    if !supported || !clone_file(source, destination)? {
         fs::copy(source, destination)?;
     }
     Ok(())
@@ -215,6 +281,7 @@ pub(super) fn cache_extracted_package(
     source: &Path,
     cache: &Path,
     integrity: Option<&str>,
+    strategy: &CloneStrategy,
 ) -> Result<()> {
     let parent = cache.parent().context("package cache path has no parent")?;
     fs::create_dir_all(parent)?;
@@ -227,7 +294,7 @@ pub(super) fn cache_extracted_package(
     let result = (|| -> Result<()> {
         fs::create_dir(&temporary)?;
         let package = temporary.join("package");
-        clone_tree(source, &package)?;
+        strategy.clone_tree(source, &package)?;
         private_cache_write(
             &temporary.join(".complete"),
             integrity.unwrap_or("").as_bytes(),
@@ -462,6 +529,86 @@ mod tests {
         assert!(safe_relative(Path::new("bin/cli.js")));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unsupported_reflinks_copy_files_without_sharing_inodes() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("file"), b"original").unwrap();
+        fs::set_permissions(source.join("file"), fs::Permissions::from_mode(0o755)).unwrap();
+        let strategy = CloneStrategy::default();
+        let device = fs::metadata(&source).unwrap().dev();
+        strategy
+            .devices
+            .lock()
+            .unwrap()
+            .insert((device, device), false);
+        for n in 0..2 {
+            let destination = root.path().join(format!("destination-{n}"));
+            strategy.clone_tree(&source, &destination).unwrap();
+            assert_eq!(fs::read(destination.join("file")).unwrap(), b"original");
+            assert_eq!(
+                fs::metadata(destination.join("file"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+            assert_ne!(
+                fs::metadata(source.join("file")).unwrap().ino(),
+                fs::metadata(destination.join("file")).unwrap().ino()
+            );
+            fs::write(destination.join("file"), b"changed").unwrap();
+        }
+        assert_eq!(fs::read(source.join("file")).unwrap(), b"original");
+        assert_eq!(strategy.devices.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_probe_is_shared_across_packages_and_threads() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("file"), b"contents").unwrap();
+        let strategy = CloneStrategy::default();
+        std::thread::scope(|scope| {
+            for n in 0..4 {
+                let strategy = &strategy;
+                let source = &source;
+                let destination = root.path().join(format!("destination-{n}"));
+                scope.spawn(move || {
+                    strategy.clone_tree(source, &destination).unwrap();
+                    assert_eq!(fs::read(destination.join("file")).unwrap(), b"contents");
+                });
+            }
+        });
+        assert_eq!(strategy.devices.lock().unwrap().len(), 1);
+        assert!(CloneStrategy::default().devices.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_trees_and_failed_copies_do_not_require_a_probe() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let strategy = CloneStrategy::default();
+        let destination = root.path().join("destination");
+        strategy.clone_tree(&source, &destination).unwrap();
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        assert!(strategy.clone_tree(&source, &destination).is_err());
+        assert!(
+            strategy
+                .clone_tree(&root.path().join("missing"), &root.path().join("other"))
+                .is_err()
+        );
+        #[cfg(target_os = "linux")]
+        assert!(strategy.devices.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn cloned_package_files_are_isolated_from_the_cache() {
         let root =
@@ -472,7 +619,9 @@ mod tests {
         fs::write(source.join("package.json"), b"{\"name\":\"fixture\"}").unwrap();
         fs::write(source.join("nested/file.js"), b"original").unwrap();
 
-        clone_tree(&source, &destination).unwrap();
+        CloneStrategy::default()
+            .clone_tree(&source, &destination)
+            .unwrap();
         fs::write(destination.join("nested/file.js"), b"modified").unwrap();
 
         assert_eq!(
@@ -498,7 +647,11 @@ mod tests {
         let destination = root.join("destination");
         fs::create_dir_all(&source).unwrap();
         std::os::unix::fs::symlink("/etc", source.join("link")).unwrap();
-        assert!(clone_tree(&source, &destination).is_err());
+        assert!(
+            CloneStrategy::default()
+                .clone_tree(&source, &destination)
+                .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

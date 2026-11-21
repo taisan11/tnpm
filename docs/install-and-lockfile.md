@@ -10,6 +10,7 @@
 - レジストリ tarball は取得時に integrity を検証して展開しますが、元 archive を保存しません。展開済みキャッシュがなければ再取得が必要です。直接 URL ソースの元 archive だけは `source-tarballs-v1` に URL / integrity をキーに保存し、offline 再配置に利用します。
 - 展開済みパッケージは名前とバージョンをキーに `~/.tnpm/cache/packages-v2/` に保存し、クリーン install では再解凍せず配置します。保存時の integrity が lockfile と異なる場合は再利用しません。integrity がない場合は展開済みキャッシュを読み書きせず、毎回取得します。macOS ではディレクトリ単位の `clonefile` を試し、リンクや特殊ファイルがないことを検証します。失敗時はファイル単位にフォールバックします。Linux では `FICLONE` を試し、非対応 filesystem では通常コピーを使用します。コピーオンライトで配置するため、install script による変更は共有キャッシュへ反映されません。認証付き・`--no-cache` の場合は読み書きしません。`--offline` でも展開済みキャッシュを利用できます。旧 `packages-v1` / `tarballs-v1` は使用・削除しません。
 - `prune` は不要な依存を `node_modules` から削除します。`prune --all` / `-a` は `node_modules` 全体を削除し、manifest・lockfile・共有キャッシュを維持します。
+- Linux の reflink 対応は install ごとにコピー元・コピー先のデバイスの組み合わせで1回確認し、並列のパッケージ配置でも結果を共有します。`FICLONE` 非対応（`EOPNOTSUPP` / `ENOTTY`）や別 filesystem（`EXDEV`）の場合は、以後ファイルごとの clone 試行・一時ファイルの作成と削除を省いて直接コピーします。確認用ファイルは1回だけ作成・削除します。一時的なエラーは非対応と判断せず、従来どおり clone 失敗時にコピーします。既定の hoisted 配置ではハードリンクを使わず、依存ファイルの直接編集・bin の権限変更・lifecycle script が共有キャッシュを変更しない保証を維持します。`node-linker=isolated` のハードリンク配置と制約は変更しません。
 - `--offline` は通信へのフォールバックを禁止します。必要なメタデータ・tarball がなければ `ENOTCACHED`。期限切れの保存済みメタデータも使用できます。`--no-cache` との併用はエラーです。
 - `node_modules/.tnpm-lock.json` を生成し、記載ディレクトリの存在・余剰ディレクトリ・更新日時を確認してから manifest 読み込みの代わりに使用します。手動でファイルの内容だけを変更した場合は npm と同様に hidden lockfile を削除してください。
 - バージョンが変わらないパッケージは再展開せず、ツリーと bin が変わらなければリンクの再生成も省略します。必須 tarball の取得・検証・展開を staging で完了してから置き換えます（`ci` の先行削除・スクリプト失敗を含め完全なトランザクションではありません）。

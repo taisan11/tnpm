@@ -15,8 +15,7 @@ use std::{
 };
 
 use store::{
-    cache_extracted_package, cached_package, clone_tree, package_cache_path, safe_relative,
-    tarball, unpack,
+    cache_extracted_package, cached_package, package_cache_path, safe_relative, tarball, unpack,
 };
 
 fn build_state(root: &Path) -> BTreeMap<String, Value> {
@@ -535,8 +534,10 @@ pub(super) async fn materialize(
                         ctx.progress
                             .event("prepare", &format!("clone package cache {path}"));
                         let dest = destination.clone();
+                        let clones = ctx.clones.clone();
                         let cache_hit =
-                            tokio::task::spawn_blocking(move || clone_tree(&cached, &dest)).await?;
+                            tokio::task::spawn_blocking(move || clones.clone_tree(&cached, &dest))
+                                .await?;
                         if cache_hit.is_ok() {
                             super::bundles::strip_modules(entry, &destination)?;
                             return Ok::<_, anyhow::Error>(());
@@ -550,12 +551,17 @@ pub(super) async fn materialize(
                     let dest = destination.clone();
                     let cache = package_cache.clone();
                     let integrity = entry.str("integrity").map(str::to_owned);
+                    let clones = ctx.clones.clone();
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         fs::create_dir_all(&dest)?;
                         unpack(&bytes, &dest).context("could not unpack tarball")?;
                         if let Some(cache) = cache
-                            && let Err(error) =
-                                cache_extracted_package(&dest, &cache, integrity.as_deref())
+                            && let Err(error) = cache_extracted_package(
+                                &dest,
+                                &cache,
+                                integrity.as_deref(),
+                                &clones,
+                            )
                         {
                             crate::util::style::progress::message(format_args!(
                                 "tnpm: could not cache extracted package: {error}"
