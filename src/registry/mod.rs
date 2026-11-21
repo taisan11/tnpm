@@ -479,6 +479,9 @@ async fn read_uncached_view(
         )?,
     };
     profile.mark("resolve_ms");
+    profile.number("cache_write_ms", 0);
+    drop(raw);
+    profile.mark("json_tree_drop_ms");
     profile.text("source", "network");
     Ok(package)
 }
