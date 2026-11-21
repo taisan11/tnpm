@@ -391,6 +391,7 @@ pub(super) async fn resolve(
     }
     profile.mark("peer_validation_ms");
     pipeline.finish().await;
+    pipeline.report(&mut profile);
     profile.mark("prefetch_tail_ms");
     Ok(lock)
 }

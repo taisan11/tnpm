@@ -21,6 +21,8 @@ pub(super) struct Pipeline<'c, 'o> {
     packages: VecDeque<(Value, String)>,
     package_keys: FxHashSet<String>,
     preparing: FuturesUnordered<LocalBoxFuture<'c, ()>>,
+    peak_metadata: usize,
+    peak_archives: usize,
 }
 
 impl<'c, 'o> Pipeline<'c, 'o> {
@@ -37,6 +39,8 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             packages: VecDeque::new(),
             package_keys: FxHashSet::default(),
             preparing: FuturesUnordered::new(),
+            peak_metadata: 0,
+            peak_archives: 0,
         }
     }
 
@@ -78,7 +82,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
     }
 
     fn start_preparing(&mut self) {
-        while self.preparing.len() < 8 {
+        while self.preparing.len() < 32 {
             let Some((entry, name)) = self.packages.pop_front() else {
                 break;
             };
@@ -117,7 +121,14 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                 }
                 .boxed_local(),
             );
+            self.peak_archives = self.peak_archives.max(self.preparing.len());
         }
+    }
+
+    pub(super) fn report(&self, profile: &mut crate::profile::Profile) {
+        profile.number("peak_metadata_tasks", self.peak_metadata as u64);
+        profile.number("peak_archive_tasks", self.peak_archives as u64);
+        profile.number("archive_packages", self.package_keys.len() as u64);
     }
 
     pub(super) async fn finish(&mut self) {
@@ -177,6 +188,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
                     }
                     .boxed_local(),
                 );
+                self.peak_metadata = self.peak_metadata.max(self.fetching.len());
             }
             let response = if self.preparing.is_empty() {
                 self.fetching.next().await
