@@ -4,6 +4,8 @@ use crate::{fs::unique, json::Value};
 use anyhow::{Context as _, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256, Sha512};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(target_os = "linux")]
 use std::{collections::HashMap, os::unix::fs::MetadataExt, sync::Mutex};
 use std::{
@@ -295,28 +297,40 @@ pub(super) fn cache_extracted_package(
         fs::create_dir(&temporary)?;
         let package = temporary.join("package");
         strategy.clone_tree(source, &package)?;
-        private_cache_write(
-            &temporary.join(".complete"),
-            integrity.unwrap_or("").as_bytes(),
-        )?;
-        match fs::rename(&temporary, cache) {
-            Ok(()) => Ok(()),
-            Err(error) if cache.exists() => {
-                // Another concurrent install may have published the same key.
-                let _ = fs::remove_dir_all(&temporary);
-                if cached_package(cache, integrity).is_some() {
-                    Ok(())
-                } else {
-                    Err(error.into())
-                }
-            }
-            Err(error) => Err(error.into()),
-        }
+        publish_package_cache(&temporary, cache, integrity)
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&temporary);
     }
     result
+}
+
+pub(super) fn publish_package_cache(
+    temporary: &Path,
+    cache: &Path,
+    integrity: Option<&str>,
+) -> Result<()> {
+    #[cfg(unix)]
+    fs::set_permissions(
+        cache.parent().context("package cache path has no parent")?,
+        fs::Permissions::from_mode(0o700),
+    )?;
+    private_cache_write(
+        &temporary.join(".complete"),
+        integrity.unwrap_or("").as_bytes(),
+    )?;
+    match fs::rename(temporary, cache) {
+        Ok(()) => Ok(()),
+        Err(error) if cache.exists() => {
+            let _ = fs::remove_dir_all(temporary);
+            if cached_package(cache, integrity).is_some() {
+                Ok(())
+            } else {
+                Err(error.into())
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Result<Vec<u8>> {

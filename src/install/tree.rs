@@ -165,7 +165,7 @@ fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::Syste
             .file_type()
             .is_symlink()
             || !directory.join("package.json").is_file()
-            || fs::metadata(directory).ok()?.modified().ok()? > modified
+            || fs::metadata(directory).ok()?.modified().ok()? >= modified
         {
             return None;
         }

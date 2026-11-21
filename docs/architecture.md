@@ -95,7 +95,8 @@ docs/                      設計・仕様・開発手順
 - `cache` はグローバルな `~/.tnpm/cache` と `~/.tnpm/exec` の保守なので、project 探索・npmrc 読み込み・async runtime の作成より前に分岐します。容量集計と削除は symlink を辿らず、他の `~/.tnpm` 内ファイルは対象外です。
 - `install` 内の `resolver` は配置計画となる lockfile を生成し、`tree` が実際のファイルを変更します。`store` は取得・展開・キャッシュに限定し、manifest や lockfile の更新を担当しません。
 - `registry` のキャッシュ実装と通信設定は内部モジュールです。他の機能は取得 API を使い、バイナリ形式に直接依存しません。
-- `registry::Query` が全表示・フィールド指定・候補全件・最新1件を区別します。install は表示用メタデータを復元せず、`view` は参照するルートキーだけを要求できます。キャッシュは全レスポンスを保持するため、別のクエリでも同じ保存済みデータを使用します。
+- `registry::Query` が全表示・フィールド指定・候補全件・最新1件を区別します。install の HTTP Accept は `application/vnd.npm.install-v1+json`、`view` は `application/json` です。表示用の情報が欠落しないよう、両形式のキャッシュキーは分離します。各形式内では全レスポンスを保持し、別の selector でも保存済みデータを使用します。offline install は従来の full metadata キャッシュも読み込めます。
+- peer-free resolver は配置順を維持しながら、応答から発見した registry 依存のメタデータを最大32件まで先読みします。同じ packument の in-flight 取得は共有し、別 selector は先行取得後にローカルで解決します。workspace / overrides は投機的な依存発見を行いません。配置候補の integrity が確定すると、最大8件の tarball 取得・検証・展開済みキャッシュ登録を解決処理と重ねます。project のファイルや hook は変更せず、最終的な lockfile 検証と materialize は従来の経路です。先読みの失敗は materialize で改めて検証・報告し、optional の扱いを変えません。offline / 認証付き・no-cache / lock-only / dry-run / source・bundled 依存は tarball 先読みの対象外です。
 - `lockfile` は npm 互換 JSON を保持し、`lockfile/graph` が走査用の読み取り専用スナップショットを作ります。依存名・範囲は元の JSON から借用し、依存先・オフセット・フラグを別々の連続配列に保存します。分類が終わって借用を解放してから JSON のフラグを更新します。物理配置を変更する resolver へ永続的な索引を持ち込まず、索引の無効化漏れを避けます。
 - `manifest` / `semver` / `spec` / `fs` / `scripts` はコマンド実装に依存しません。共通処理を追加するときは、特定のコマンドを経由して呼び出さないようにします。
 - `util/style` は色、表、進捗および `view` の人間向け出力の整形をまとめます。コマンドの実行やデータ取得は担当しません。

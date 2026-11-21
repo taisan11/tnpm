@@ -137,6 +137,7 @@ fn summary(options: &Options, action: &str, count: usize) {
 }
 
 pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> {
+    let mut profile = crate::profile::Profile::new("install");
     if (options.offline || config.enabled("offline")) && options.no_cache {
         bail!("--offline and --no-cache cannot be combined");
     }
@@ -363,6 +364,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         }
     }
     let (effective, _) = sources::effective(root, &manifest)?;
+    profile.mark("setup_ms");
     let lock = resolve(
         &ctx,
         &effective,
@@ -372,6 +374,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         memo,
     )
     .await?;
+    profile.mark("resolve_ms");
     if !options.no_save {
         if options.command == "uninstall"
             || (options.command == "install" && !options.arguments.is_empty())
@@ -392,7 +395,9 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         }
         return Ok(());
     }
+    profile.mark("lock_write_ms");
     materialize(&ctx, root, &effective, &lock, false).await?;
+    profile.mark("materialize_ms");
     if let Some(before) = &before_update {
         ctx.progress.event(
             "place",

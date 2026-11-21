@@ -163,14 +163,17 @@ async fn send_with_retry(request: &reqwest::RequestBuilder) -> Result<reqwest::R
 }
 
 pub fn fetch_offline(url: &reqwest::Url, query: Query<'_>) -> Result<Package> {
-    let key = url.as_str();
+    let key = metadata_key(url, query);
+    let key = key.as_str();
     if let Some(document) = DOCUMENTS.with(|documents| documents.borrow().get(key)) {
         return resolve_binary(&document, query);
     }
     let cache = Cache::home().context("offline registry cache is unavailable")?;
-    let document = cache
-        .load(key)?
-        .with_context(|| format!("ENOTCACHED: {url}"))?;
+    let mut document = cache.load(key)?;
+    if document.is_none() && !query.metadata {
+        document = cache.load(url.as_str())?;
+    }
+    let document = document.with_context(|| format!("ENOTCACHED: {url}"))?;
     let document = Rc::new(document);
     remember(key, document.clone());
     // Explicit offline mode permits stale metadata, but never a network fallback.
@@ -201,11 +204,17 @@ pub async fn fetch_using(
         Cache::home()
     };
     let mut headers = http_cache::request_headers();
+    if !query.metadata {
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("application/vnd.npm.install-v1+json"),
+        );
+    }
     headers.insert(
         reqwest::header::ACCEPT_ENCODING,
         reqwest::header::HeaderValue::from_static(transport.accept_encoding()),
     );
-    let key = url.as_str().to_owned();
+    let key = metadata_key(&url, query);
     let document = load_cached(cache.as_ref(), &key)
         .await?
         .filter(|document| document.policy().matches(&headers));
@@ -382,6 +391,14 @@ pub struct Query<'a> {
     metadata: bool,
     latest_only: bool,
     fields: &'a [String],
+}
+
+fn metadata_key(url: &reqwest::Url, query: Query<'_>) -> String {
+    if query.metadata {
+        url.as_str().to_owned()
+    } else {
+        format!("{url}#install-v1")
+    }
 }
 
 impl<'a> Query<'a> {

@@ -7,11 +7,11 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use futures_util::{StreamExt, stream};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 
 mod peers;
+mod pipeline;
 
 pub(super) fn descriptor(data: &Value) -> Result<Value> {
     let mut entry = lockfile::copy_fields(
@@ -31,6 +31,7 @@ pub(super) fn descriptor(data: &Value) -> Result<Value> {
             "funding",
             "libc",
             "gypfile",
+            "hasInstallScript",
             "bundleDependencies",
             "bundledDependencies",
             "tnpmSpec",
@@ -171,6 +172,7 @@ pub(super) async fn resolve(
     update: bool,
     mut memo: FxHashMap<(String, String), Value>,
 ) -> Result<Lockfile> {
+    let mut profile = crate::profile::Profile::new("resolve");
     ctx.progress.event("resolve", "checking dependency graph");
     super::overrides::validate(manifest)?;
     // Workspace and file: sources can change without the root manifest, so they
@@ -205,6 +207,7 @@ pub(super) async fn resolve(
             return Ok(lock);
         }
     }
+    profile.mark("lock_reuse_ms");
     let mut lock = Lockfile::default();
     lock.packages
         .insert("".into(), lockfile::root_entry(manifest));
@@ -215,6 +218,10 @@ pub(super) async fn resolve(
         .filter(|d| !d.peer)
         .map(|d| (String::new(), d))
         .collect();
+    let mut pipeline = pipeline::Pipeline::new(
+        ctx,
+        manifest.get("overrides").is_none() && manifest.get("workspaces").is_none(),
+    );
     while !pending.is_empty() {
         if lock.packages.len() > 50_000 {
             bail!("dependency graph exceeds 50,000 packages");
@@ -258,45 +265,7 @@ pub(super) async fn resolve(
                 requests.insert(key);
             }
         }
-        // Fetch one selector per package first so the URL-keyed document cache
-        // is populated; other selectors for the same packument then resolve
-        // locally instead of issuing duplicate requests.
-        let mut first = Vec::new();
-        let mut rest = Vec::new();
-        let mut previous: Option<String> = None;
-        for (name, spec) in requests {
-            if previous.as_deref() == Some(name.as_str()) {
-                rest.push((name, spec));
-            } else {
-                previous = Some(name.clone());
-                first.push((name, spec));
-            }
-        }
-        let mut responses = Vec::new();
-        for batch in [first, rest] {
-            let part: Vec<_> = stream::iter(batch.into_iter().map(|(name, spec)| async move {
-                let result = ctx
-                    .metadata(&name, &spec)
-                    .await
-                    .and_then(|v| descriptor(&v));
-                ((name, spec), result)
-            }))
-            .buffer_unordered(CONCURRENCY)
-            .collect()
-            .await;
-            responses.extend(part);
-        }
-        let mut errors = FxHashMap::default();
-        for (key, result) in responses {
-            match result {
-                Ok(entry) => {
-                    memo.insert(key, entry);
-                }
-                Err(error) => {
-                    errors.insert(key, error);
-                }
-            }
-        }
+        pipeline.resolve(requests, &mut memo).await;
         let mut next = Vec::new();
         for (from, dep) in pending {
             if let Some(path) = lock.resolve(&from, &dep.name)
@@ -321,14 +290,16 @@ pub(super) async fn resolve(
                     crate::util::style::progress::message(format_args!(
                         "tnpm: skipped optional {}: {}",
                         dep.name,
-                        errors
+                        pipeline
+                            .errors
                             .get(&key)
                             .map(|error| format!("{error:#}"))
                             .unwrap_or_else(|| "resolution failed".into())
                     ));
                     continue;
                 }
-                return Err(errors
+                return Err(pipeline
+                    .errors
                     .remove(&key)
                     .unwrap_or_else(|| anyhow!("resolution failed")))
                 .with_context(|| format!("{}@{}", dep.name, dep.spec));
@@ -390,6 +361,7 @@ pub(super) async fn resolve(
             {
                 next.push((location.clone(), dep));
             }
+            pipeline.prefetch(&entry, &dep.name);
             lock.packages.insert(location.clone(), entry);
             index_package(&lock, &mut dependents, &location);
             // `bundles::insert` adds packages directly; index the new subtree.
@@ -409,6 +381,7 @@ pub(super) async fn resolve(
         }
         pending = next;
     }
+    profile.mark("metadata_pipeline_ms");
     if !lock.finalize(manifest, ctx.peer_policy())? {
         ctx.progress
             .event("resolve", "checking peer dependency sets");
@@ -416,5 +389,8 @@ pub(super) async fn resolve(
         // placement/version search rather than independent greedy hoisting.
         return peers::resolve(ctx, manifest, old, update).await;
     }
+    profile.mark("peer_validation_ms");
+    pipeline.finish().await;
+    profile.mark("prefetch_tail_ms");
     Ok(lock)
 }

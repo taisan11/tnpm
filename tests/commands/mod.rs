@@ -12,6 +12,7 @@ mod jsr;
 mod outdated;
 mod output;
 mod peers;
+mod pipeline;
 mod project;
 mod publish;
 mod registry;
