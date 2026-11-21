@@ -357,10 +357,10 @@ fn link_bins(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::{PermissionsExt, symlink};
-                let mode = fs::metadata(&source)?.permissions().mode();
+                let mode = fs::metadata(&canonical)?.permissions().mode();
                 if mode & 0o111 != 0o111 {
-                    store::detach_file(&source)?;
-                    fs::set_permissions(&source, fs::Permissions::from_mode(mode | 0o111))?;
+                    store::detach_file(&canonical)?;
+                    fs::set_permissions(&canonical, fs::Permissions::from_mode(mode | 0o111))?;
                 }
                 let destination = dir.join(&name);
                 if fs::symlink_metadata(&destination).is_ok() {

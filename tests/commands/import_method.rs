@@ -1,6 +1,50 @@
 use crate::support::Fixture;
 use std::fs;
 
+#[cfg(unix)]
+#[test]
+fn workspace_symlink_bins_keep_their_links_during_install_and_rebuild() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let f = Fixture::new();
+    f.file(
+        "package.json",
+        r#"{"workspaces":["packages/*"],"dependencies":{"app":"workspace:*"}}"#,
+    );
+    f.file(
+        "packages/app/package.json",
+        r#"{"name":"app","version":"1.0.0","bin":{"app":"bin/cli.sh"}}"#,
+    );
+    f.file(
+        "packages/app/lib/cli.sh",
+        "#!/bin/sh\nprintf 'workspace\\n'\n",
+    );
+    fs::create_dir_all(f.root.join("packages/app/bin")).unwrap();
+    symlink("../lib/cli.sh", f.root.join("packages/app/bin/cli.sh")).unwrap();
+    for command in ["install", "rebuild"] {
+        fs::set_permissions(
+            f.root.join("packages/app/lib/cli.sh"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        f.ok(&[
+            command,
+            "--ignore-scripts",
+            "--package-import-method=hardlink",
+        ]);
+        assert!(
+            fs::symlink_metadata(f.root.join("packages/app/bin/cli.sh"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let output = std::process::Command::new(f.root.join("node_modules/.bin/app"))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "workspace\n");
+    }
+}
+
 #[test]
 fn import_method_configuration_and_empty_graphs() {
     let f = Fixture::new();
