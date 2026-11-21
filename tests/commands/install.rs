@@ -327,6 +327,16 @@ fn stale_hidden_lock_is_not_trusted() {
         r#"{"name":"app","version":"0.0.0"}"#,
     );
     f.file("node_modules/app/new-file", "changes directory mtime");
+    let modified = fs::metadata(f.root.join("node_modules/app"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(f.root.join("node_modules/.tnpm-lock.json"))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
     f.ok(&["install", "--ignore-scripts"]);
     assert!(
         fs::read_to_string(f.root.join("node_modules/app/package.json"))
