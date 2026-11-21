@@ -24,6 +24,7 @@ pub(super) struct Pipeline<'c, 'o> {
     preparing: FuturesUnordered<LocalBoxFuture<'c, ()>>,
     peak_metadata: usize,
     peak_archives: usize,
+    archive_packages: usize,
 }
 
 impl<'c, 'o> Pipeline<'c, 'o> {
@@ -43,6 +44,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             preparing: FuturesUnordered::new(),
             peak_metadata: 0,
             peak_archives: 0,
+            archive_packages: 0,
         }
     }
 
@@ -70,17 +72,19 @@ impl<'c, 'o> Pipeline<'c, 'o> {
         else {
             return;
         };
-        if store::cached_package(&cache, entry.str("integrity")).is_some() {
-            return;
-        }
         let key = format!(
             "{}\n{}",
             entry.str("resolved").unwrap_or(""),
             entry.str("integrity").unwrap_or("")
         );
-        if self.package_keys.insert(key) {
-            self.packages.push_back((entry.clone(), name.to_owned()));
+        if !self.package_keys.insert(key) {
+            return;
         }
+        if store::cached_package(&cache, entry.str("integrity")).is_some() {
+            return;
+        }
+        self.packages.push_back((entry.clone(), name.to_owned()));
+        self.archive_packages += 1;
     }
 
     fn start_preparing(&mut self) {
@@ -115,7 +119,7 @@ impl<'c, 'o> Pipeline<'c, 'o> {
     pub(super) fn report(&self, profile: &mut crate::profile::Profile) {
         profile.number("peak_metadata_tasks", self.peak_metadata as u64);
         profile.number("peak_archive_tasks", self.peak_archives as u64);
-        profile.number("archive_packages", self.package_keys.len() as u64);
+        profile.number("archive_packages", self.archive_packages as u64);
     }
 
     pub(super) async fn finish(&mut self) {

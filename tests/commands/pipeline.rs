@@ -516,6 +516,54 @@ fn streamed_archives_stay_private_until_the_complete_response_passes_integrity()
 }
 
 #[test]
+fn warm_archive_probes_keep_prefetch_counts_and_missing_cache_repairs_accurate() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"child":"1"}"#);
+    f.single("z", r#", "dependencies":{"child":"1"}"#);
+    f.single("child", "");
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    let store = f.root.join("store");
+    f.file(".npmrc", &format!("store-dir={}\n", store.display()));
+    for (round, expected) in [(0, 3), (1, 0), (2, 1), (3, 0)] {
+        if round > 0 {
+            fs::remove_dir_all(f.root.join("node_modules")).unwrap();
+            fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+            f.requests.lock().unwrap().clear();
+        }
+        if round == 2 {
+            fs::remove_dir_all(store.join("packages-v2/child@1.0.0")).unwrap();
+        }
+        if round == 3 {
+            f.file("package.json", "{}");
+        }
+        let output = f
+            .command()
+            .env("TNPM_PROFILE", "1")
+            .args(["install", "--ignore-scripts"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(output.status.success(), "{stderr}");
+        let profile = stderr
+            .lines()
+            .find(|line| line.contains("\"section\":\"resolve\""))
+            .unwrap();
+        assert!(
+            profile.contains(&format!("\"archive_packages\":{expected}")),
+            "{profile}"
+        );
+        if round == 1 || round == 3 {
+            assert!(f.requests.lock().unwrap().is_empty());
+            assert!(profile.contains("\"peak_archive_tasks\":0"), "{profile}");
+        }
+        if round == 2 {
+            assert_eq!(*f.requests.lock().unwrap(), ["/tar/child-1.0.0.tgz"]);
+            assert!(store.join("packages-v2/child@1.0.0/.complete").is_file());
+        }
+    }
+}
+
+#[test]
 fn failed_prefetch_integrity_never_replaces_installed_files() {
     let f = Fixture::new();
     f.single("app", "");
