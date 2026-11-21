@@ -1,8 +1,8 @@
-# TypeScript toolchain (tsrs)
+# TypeScript ツールチェーン（tsrs）
 
-tnpm can replace the **tsc command in package.json scripts** with [tsrs](https://github.com/oxc-project/tsrs) without changing the script text or installed dependencies.
+tnpm は、スクリプトの内容やインストール済みの依存を変更せずに、**package.json の scripts 内の tsc コマンド**を [tsrs](https://github.com/oxc-project/tsrs) に置き換えられます。
 
-For example:
+たとえば次のようなスクリプトが対象です。
 
 ```json
 {
@@ -13,39 +13,39 @@ For example:
 }
 ```
 
-`tnpm run check`, `tnpm check`, and `tnpm run build` continue to invoke the named scripts. During the script and its `pre`/`post` hooks, tnpm puts a temporary `tsc` shim **before** `node_modules/.bin` on `PATH`. The shim runs tsrs, passing arguments and exit status through unchanged.
+`tnpm run check`、`tnpm check`、`tnpm run build` は、従来どおり指定した名前のスクリプトを実行します。スクリプトとその `pre` / `post` フックの実行中、tnpm は一時的な `tsc` shim を `PATH` 上の `node_modules/.bin` **より前**に置きます。shim は tsrs を実行し、引数と終了ステータスをそのまま引き継ぎます。
 
-The repository's release workflow embeds a pinned native tsrs compiler and its adjacent TypeScript standard library files inside the tnpm executable. The files are extracted to the user's cache on first use. Rust builds without `TNPM_TSRS_BUNDLE` use a separately installed `tsrs` executable instead; without either, scripts run the original `tsc`.
+このリポジトリのリリースワークフローは、バージョンを固定したネイティブ tsrs コンパイラと、それに付属する TypeScript 標準ライブラリのファイルを tnpm 実行ファイルに埋め込みます。初回使用時にユーザーのキャッシュへ展開します。`TNPM_TSRS_BUNDLE` を指定しない Rust ビルドでは、別途インストールされた `tsrs` 実行ファイルを代わりに使います。どちらもなければ、スクリプトは元の `tsc` を実行します。
 
-## Configuration
+## 設定
 
-Put this in a project or user `.npmrc`:
+プロジェクトまたはユーザーの `.npmrc` に次を記述します。
 
 ```ini
 toolchain-tsrs=auto
 ```
 
-| Value | Behavior |
+| 値 | 動作 |
 | --- | --- |
-| `auto` (default) | Replace `tsc` only if the installed `typescript` is version 7.1.x and tsrs is available |
-| `on` | Replace any `tsc` invocation from a script when tsrs is available, regardless of TypeScript version |
-| `off` | Never replace `tsc` |
+| `auto`（既定） | インストール済みの `typescript` が 7.1.x で、tsrs が利用可能な場合のみ `tsc` を置き換える |
+| `on` | tsrs が利用可能なら、TypeScript のバージョンにかかわらずスクリプトからの `tsc` 呼び出しを置き換える |
+| `off` | `tsc` を置き換えない |
 
-`npm_config_toolchain_tsrs=on` overrides `.npmrc` like other npm-compatible settings. If no tsrs is bundled or installed, `tnpm run` retains normal behavior even with `on`.
+ほかの npm 互換設定と同様に、`npm_config_toolchain_tsrs=on` は `.npmrc` より優先されます。tsrs が同梱もインストールもされていなければ、`on` でも `tnpm run` は通常の動作を維持します。
 
-tsrs currently follows a pinned TypeScript 7.1 beta and is still experimental. `auto` is intentionally conservative: older TypeScript 5.x/6.x projects retain their compiler. For explicit testing of older projects use `on` and compare diagnostics and emitted files.
+現在の tsrs は固定された TypeScript 7.1 beta に追従する実験的な実装です。`auto` は意図的に保守的な動作とし、従来の TypeScript 5.x / 6.x プロジェクトでは既存のコンパイラを維持します。古いプロジェクトで明示的に試す場合は `on` を使い、診断と出力ファイルを比較してください。
 
-## Compatibility and limitations
+## 互換性と制限
 
-- `--noEmit`, ordinary builds, and watch/build mode are handled by tsrs.
-- tsrs currently does not implement `--init` or `--showConfig`. These command-line operations fall back to the original `tsc` if available.
-- Script text is not rewritten. Shell command sequences and nested script calls can use the PATH shim. Explicit paths such as `node node_modules/typescript/bin/tsc` do **not** use the shim.
-- Only scripts launched by `tnpm run` and their pre/post hooks are affected. Dependency installation lifecycle hooks, `tnpm exec tsc`, and `import "typescript"` are not rewritten.
-- The embedded compiler has an independent version from the project's installed TypeScript. No guarantee of full compatibility is implied.
-- Bundling tsrs increases the size of official tnpm binaries. Runtime extraction uses the local user cache; no network requests are made.
+- `--noEmit`、通常のビルド、watch / build モードは tsrs が処理します。
+- tsrs は現在 `--init` と `--showConfig` を実装していません。これらのコマンドライン操作は、元の `tsc` が利用可能ならそちらへフォールバックします。
+- スクリプトの内容は書き換えません。シェルの連続したコマンドや入れ子のスクリプト呼び出しでも PATH 上の shim を使えます。`node node_modules/typescript/bin/tsc` のような明示的なパスは shim を**使いません**。
+- 対象は `tnpm run` が起動するスクリプトとその pre/post フックだけです。依存インストール時の lifecycle フック、`tnpm exec tsc`、`import "typescript"` は書き換えません。
+- 埋め込みコンパイラのバージョンは、プロジェクトにインストールされた TypeScript とは独立しています。完全な互換性は保証しません。
+- tsrs の同梱により公式 tnpm バイナリのサイズは増加します。実行時の展開にはローカルのユーザーキャッシュを使い、ネットワーク通信は行いません。
 
-The embedded tsrs compiler and TypeScript standard library definitions are licensed under Apache-2.0, copyright their respective contributors and Microsoft Corporation. See [tsrs LICENSE and NOTICE](https://github.com/oxc-project/tsrs) for attribution. The release bundle also carries the available upstream notice and license files.
+埋め込みの tsrs コンパイラと TypeScript 標準ライブラリの型定義は Apache-2.0 ライセンスで提供され、著作権はそれぞれの貢献者および Microsoft Corporation に帰属します。帰属情報は [tsrs LICENSE and NOTICE](https://github.com/oxc-project/tsrs) を参照してください。リリース用のバンドルには、上流が提供する通知・ライセンスファイルも同梱します。
 
-## Maintainer builds
+## メンテナー向けビルド
 
-To embed your own compiler build, set `TNPM_TSRS_BUNDLE` to an absolute path to a `tar.gz` archive containing a platform-native `tsrs` (or `tsrs.exe`) and `lib.d.ts` at its root. The release workflow creates that archive with `.github/scripts/bundle_tsrs.py` and passes the location to Cargo. Ordinary `cargo build` builds are small and do not fetch anything.
+独自にビルドしたコンパイラを埋め込むには、対象プラットフォームのネイティブ `tsrs`（または `tsrs.exe`）と `lib.d.ts` をルートに含む `tar.gz` アーカイブを用意し、その絶対パスを `TNPM_TSRS_BUNDLE` に設定します。リリースワークフローは `.github/scripts/bundle_tsrs.py` でこのアーカイブを作成し、保存先を Cargo に渡します。通常の `cargo build` は小さなバイナリを生成し、取得処理は行いません。

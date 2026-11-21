@@ -1,6 +1,6 @@
-# Runner
+# ランナー
 
-`tnpm run` executes a named `package.json` script or a JavaScript/TypeScript entry file. A script name always takes priority if it matches a file name.
+`tnpm run` は、`package.json` に定義された名前付きスクリプト、または JavaScript / TypeScript のエントリーファイルを実行します。スクリプト名とファイル名が一致する場合は、常にスクリプトを優先します。
 
 ```sh
 tnpm run build -- --watch
@@ -8,22 +8,22 @@ tnpm run ./src/main.ts -- --port 3000
 tnpm run ./src/main.js
 ```
 
-## Direct file execution
+## ファイルの直接実行
 
-Install Node.js 22.15 or later (or 23.5 or later for Node 23). Oxc's Rust transformer, resolver and CommonJS lowering are built into tnpm; no npm loader package is required. tnpm starts Node with its own synchronous module hooks, invokes its bridge for transformations and unresolved imports, and leaves execution to Node. TypeScript is transformed, not type-checked. Run a separate type checker when needed.
+Node.js 22.15 以降（Node 23 系は 23.5 以降）をインストールしてください。Oxc の Rust 製変換器・リゾルバと CommonJS 変換は tnpm に組み込まれており、npm の loader パッケージは不要です。tnpm は独自の同期モジュールフックを付けて Node を起動し、変換や未解決の import にはブリッジを呼び出し、実行自体は Node に任せます。TypeScript は変換のみで、型検査は行いません。必要に応じて別の型検査器を実行してください。
 
-The entry must end in `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts` or `.cts`. Node's normal module resolution is attempted first; Oxc resolves imports that Node cannot find, including supported `tsconfig.json` path aliases and TypeScript extensions. Oxc's default transform options apply, and tnpm lowers import/export syntax for CommonJS files using Oxc's AST; tsconfig transform options and source maps are not yet supported. The CommonJS lowering preserves live named/default imports, re-exports and namespace objects; top-level `this` and `import.meta` are not rewritten. Source files requiring transformation use one long-lived bridge process (started on first use) that exchanges framed requests over its standard streams; transformations, resolutions and remote fetches are memoized for the lifetime of the run. Platforms without usable pipe descriptors fall back to a separate tnpm process per request. Hooks are installed in the main Node process; worker threads and independently spawned Node processes do not automatically inherit them.
+エントリーの拡張子は `.js`、`.jsx`、`.mjs`、`.cjs`、`.ts`、`.tsx`、`.mts`、`.cts` のいずれかである必要があります。まず Node の通常のモジュール解決を試し、見つからない import を Oxc で解決します。対応する `tsconfig.json` のパスエイリアスや TypeScript の拡張子も対象です。変換には Oxc の既定オプションを適用し、CommonJS ファイルの import/export 構文は Oxc の AST を使って変換します。tsconfig の変換オプションとソースマップは未対応です。CommonJS 変換は名前付き・デフォルト import のライブバインディング、再 export、名前空間オブジェクトを維持します。トップレベルの `this` と `import.meta` は書き換えません。変換が必要なソースファイルには、初回使用時に起動する1つの常駐ブリッジプロセスを使い、標準入出力でフレーム化した要求を交換します。変換・解決・リモート取得の結果は実行中メモ化します。利用可能なパイプ記述子がないプラットフォームでは、要求ごとに別の tnpm プロセスを起動する方式へフォールバックします。フックはメインの Node プロセスに登録し、worker スレッドや独立して起動した Node プロセスには自動継承しません。
 
-Entry paths are relative to the invocation directory, or to `--prefix` when specified. Direct execution does not require a package.json. Arguments after the entry are passed directly to Node without shell interpretation. The child inherits standard input, output and error; its normal exit code is propagated. Entry execution does not run npm lifecycle hooks. Node flags before the entry and watch mode are not currently supported; use Node directly for those.
+エントリーのパスは実行時のディレクトリを基準とし、`--prefix` 指定時はそのディレクトリを基準とします。直接実行に package.json は不要です。エントリー以降の引数はシェルで解釈せず Node に直接渡します。子プロセスは標準入力・標準出力・標準エラーを継承し、通常の終了コードを引き継ぎます。エントリーの実行では npm lifecycle フックを実行しません。エントリー前の Node フラグや watch モードは現在未対応のため、必要な場合は Node を直接使ってください。
 
-## JSR, npm and URL imports
+## JSR・npm・URL import
 
-Direct execution also resolves `jsr:@scope/package@range[/export]`, `npm:package@range[/export]` and HTTP(S) imports. JSR uses its official npm compatibility distribution; matching local installations are preferred, otherwise packages are installed in isolated runner caches with lifecycle hooks disabled. HTTP modules retain their final URL, resolve relative and dynamic imports, and transform TypeScript. JSON imports require `with { type: 'json' }`. Node's existing file, builtin and data URL handling is retained.
+直接実行では `jsr:@scope/package@range[/export]`、`npm:package@range[/export]`、HTTP(S) import も解決します。JSR は公式の npm 互換配布物を使います。条件に合うローカルのインストール済みパッケージを優先し、なければ lifecycle フックを無効にしてランナー専用の隔離キャッシュへインストールします。HTTP モジュールは最終 URL を保持し、相対・動的 import の解決と TypeScript の変換を行います。JSON import には `with { type: 'json' }` が必要です。Node の既存のファイル・組み込みモジュール・data URL の処理は維持します。
 
-Use `tnpm run --offline FILE` for cache-only execution or `tnpm run --no-cache FILE` to reload remote modules. URL caches are not pinned in the project lockfile. Remote CommonJS, URL entry points, Deno APIs and import maps are not supported. These features do not sandbox imported code. See [JSR and URL imports](jsr-and-url-imports.md) for cache, authentication, protocol boundaries and limitations.
+キャッシュだけで実行する場合は `tnpm run --offline FILE`、リモートモジュールを再取得する場合は `tnpm run --no-cache FILE` を使います。URL キャッシュはプロジェクトの lockfile に固定しません。リモート CommonJS、URL エントリー、Deno API、import map は未対応です。これらの機能は import したコードをサンドボックスで隔離しません。キャッシュ・認証・プロトコル境界・制限は [JSR と URL import](jsr-and-url-imports.md) を参照してください。
 
-## Package scripts
+## パッケージスクリプト
 
-With no operand, `tnpm run` lists scripts (`--json` emits JSON). Named scripts run from the project root using the system shell, with local `node_modules/.bin` directories on PATH. Arguments are appended to the main script, not its hooks. `pre<name>` and `post<name>` run before and after a successful main script respectively, unless `--ignore-scripts` is set. `--if-present` suppresses errors for missing script names. For direct file operands, a missing file is still an error.
+引数なしの `tnpm run` はスクリプト一覧を表示します（`--json` で JSON 出力）。名前付きスクリプトは、ローカルの `node_modules/.bin` ディレクトリを PATH に追加し、プロジェクトルートでシステムのシェルを使って実行します。引数はメインのスクリプトに追加し、フックには渡しません。`--ignore-scripts` を指定しなければ、`pre<name>` をメインのスクリプトの前に、`post<name>` をメインのスクリプトが成功した後に実行します。`--if-present` は指定したスクリプト名が存在しない場合のエラーを抑制します。ファイルを直接指定した場合は、ファイルがなければ引き続きエラーです。
 
-Lifecycle environment includes `npm_lifecycle_event`, `npm_lifecycle_script`, `npm_package_json`, `npm_package_name`, `npm_package_version`, `npm_execpath` and `INIT_CWD`. Scripts execute as written; tnpm does not inject the runner into arbitrary shell commands.
+lifecycle の環境変数には `npm_lifecycle_event`、`npm_lifecycle_script`、`npm_package_json`、`npm_package_name`、`npm_package_version`、`npm_execpath`、`INIT_CWD` が含まれます。スクリプトは記述どおりに実行し、任意のシェルコマンドにランナーを注入しません。

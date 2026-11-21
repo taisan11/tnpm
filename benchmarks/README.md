@@ -143,7 +143,7 @@ node benchmarks/profile-network.mjs --cache --label=cached --output=benchmarks/r
 
 既定の対象は既存の比較と同じ `hono@4.13.13`、5サンプルです。`--spec=hono@<version>` / `--samples=N` / `--tnpm=PATH` で変更できます。本文の byte 数は自動展開後のサイズであり、圧縮時の実転送量ではありません。`headers_ms` は DNS・TCP・TLS・サーバー待ちの合計で、TLS だけの時間ではありません。
 
-通常ビルドで reqwest のデフォルト機能と gzip / Brotli / deflate / zstd が有効です。調査時は同じバイナリの設定を切り替え、5条件（非圧縮HTTP/1.1、gzipのみ、非圧縮HTTP/2、gzip＋HTTP/2、全機能の通常設定）を比較できます。
+通常ビルドでは reqwest の `default-features = false` とし、`default-tls`・`http2`・`system-proxy`・`gzip`・`brotli`・`deflate`・`zstd` を明示的に有効化しています。`charset` は有効にしていません。調査時は同じバイナリの設定を切り替え、5条件（非圧縮HTTP/1.1、gzipのみ、非圧縮HTTP/2、gzip＋HTTP/2、全機能の通常設定）を比較できます。
 
 ```sh
 cargo build --release

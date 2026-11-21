@@ -16,7 +16,7 @@ tnpm が認識する manifest の主なフィールドを示します。`package
 | `scripts` | 名前→コマンド文字列 | `run` と各種 lifecycle に使用 |
 | `files` | パス・glob の配列 | `pack` / `publish` の同梱対象の選択 |
 
-`init` は未指定の場合に `name`、`version`、`description`、`main`、`license` と `scripts.test` を設定します。既存のフィールドは残します。
+`init` は未指定の場合に `name`、`version`、`description`、`main`、`license` を設定します。`scripts` フィールド自体がない場合のみ、既定の `scripts.test` を追加します。既存の `scripts` に `test` がなくても追加せず、既存のフィールドは残します。
 
 ## 依存関係
 

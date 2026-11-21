@@ -20,7 +20,7 @@ tnpm は組み込みコマンドを優先して解釈します。最初の名前
 | [`init`](./execution.md#init) | — | `package.json` を初期化 |
 | [`ls`](./inspection.md#ls) | — | インストール済み依存を列挙 |
 | [`view`](./inspection.md#view) | — | レジストリのメタデータ |
-| [`why` / `explain`](./inspection.md#explain) | `why` | 依存の要求元と経路 |
+| [`explain`](./inspection.md#explain) | `why` | 依存の要求元と経路（別名 `why`） |
 | [`audit`](./inspection.md#audit) | — | 脆弱性 advisory の照会 |
 | [`fund`](./inspection.md#fund) | — | funding URL の列挙 |
 | [`login` / `adduser`](./publishing.md#login) | — | レジストリ認証 |
