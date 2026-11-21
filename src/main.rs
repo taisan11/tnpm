@@ -25,6 +25,8 @@ use util::style::{self, progress};
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> std::process::ExitCode {
+    let mut profile = profile::Profile::new("process");
+    profile.timestamp("entered_unix");
     if let Some(result) = runner::internal() {
         return match result {
             Ok(()) => std::process::ExitCode::SUCCESS,
@@ -39,7 +41,9 @@ fn main() -> std::process::ExitCode {
         };
     }
     style::init();
+    profile.mark("initialize_ms");
     let result = app::run();
+    profile.mark("application_ms");
     progress::finish();
     let status = match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -75,5 +79,7 @@ fn main() -> std::process::ExitCode {
             style::Tone::Muted
         )
     );
+    profile.mark("output_ms");
+    profile.timestamp("leaving_unix");
     status
 }

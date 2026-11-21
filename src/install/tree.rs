@@ -798,6 +798,7 @@ pub(super) async fn materialize(
             ctx.progress.event("place", "linking isolated dependencies");
             super::isolated::convert(ctx, root, manifest, lock, &selected)?;
         }
+        profile.mark("hooks_ms");
         let mut hidden = lock.clone();
         hidden.packages.retain(|path, _| selected.contains(path));
         builds.retain(|path, _| {
@@ -806,6 +807,7 @@ pub(super) async fn materialize(
         let mut hidden_value = hidden.value(manifest, true);
         hidden_value.set("tnpmBuilds", Value::Object(builds.into_iter().collect()));
         write_json(&root.join("node_modules/.tnpm-lock.json"), &hidden_value)?;
+        profile.mark("hidden_lock_ms");
         Ok(())
     }
     .await;

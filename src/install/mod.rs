@@ -167,6 +167,7 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         bail!("ci requires package.json");
     }
     let old = Lockfile::read(root)?;
+    profile.mark("manifest_lock_read_ms");
     let mut memo = FxHashMap::default();
     if options.command == "ci" {
         let (manifest, _) = sources::effective(root, &manifest)?;
@@ -405,6 +406,13 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         );
         report::print(options, before, &tree::snapshot(&ctx, root)?);
     }
+    drop(lock);
+    drop(old);
+    drop(effective);
+    drop(manifest);
+    profile.mark("data_drop_ms");
+    drop(ctx);
+    profile.mark("context_drop_ms");
     Ok(())
 }
 

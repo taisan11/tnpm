@@ -308,7 +308,24 @@ fn clone_tree_files(
             supported =
                 Some(strategy.supported(&entry.path(), &destination.join(entry.file_name()))?);
         }
+        #[cfg(unix)]
+        let links = if method.links() && (!method.clones() || supported == Some(false)) {
+            Some(DirectoryLinks::open(source, destination)?)
+        } else {
+            None
+        };
         let import = |(entry, kind): &(fs::DirEntry, fs::FileType)| {
+            #[cfg(unix)]
+            if let Some(links) = &links
+                && kind.is_file()
+                && !kind.is_symlink()
+            {
+                return hardlink_or_copy(
+                    &entry.path(),
+                    &destination.join(entry.file_name()),
+                    |_, _| links.link(&entry.file_name()),
+                );
+            }
             clone_tree_files(
                 &entry.path(),
                 &destination.join(entry.file_name()),
@@ -363,6 +380,50 @@ fn clone_tree_files(
     }
     fs::copy(source, destination)?;
     Ok(())
+}
+
+#[cfg(unix)]
+struct DirectoryLinks {
+    source: fs::File,
+    destination: fs::File,
+}
+
+#[cfg(unix)]
+impl DirectoryLinks {
+    fn open(source: &Path, destination: &Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let open = |path| {
+            fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+                .open(path)
+        };
+        Ok(Self {
+            source: open(source)?,
+            destination: open(destination)?,
+        })
+    }
+
+    fn link(&self, name: &std::ffi::OsStr) -> std::io::Result<()> {
+        use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
+        let name = std::ffi::CString::new(name.as_bytes())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        // Both descriptors stay open and the directory-entry name is NUL-terminated.
+        let result = unsafe {
+            libc::linkat(
+                self.source.as_raw_fd(),
+                name.as_ptr(),
+                self.destination.as_raw_fd(),
+                name.as_ptr(),
+                0,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
 }
 
 fn hardlink_or_copy(
