@@ -1,4 +1,4 @@
-//! Tarball fetching, integrity checks, safe extraction, and copy-on-write caching.
+//! Tarball fetching, integrity checks, safe extraction, and package importing.
 use super::context::Context;
 use crate::{fs::unique, json::Value};
 use anyhow::{Context as _, Result, bail, ensure};
@@ -19,6 +19,33 @@ use std::{
 pub(super) struct CloneStrategy {
     #[cfg(target_os = "linux")]
     devices: Mutex<HashMap<(u64, u64), bool>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImportMethod {
+    Auto,
+    Hardlink,
+    Copy,
+    CloneOrCopy,
+}
+
+impl ImportMethod {
+    pub(super) fn configured(ctx: &Context<'_>) -> Self {
+        match ctx.config.get("package-import-method") {
+            Some("hardlink") => Self::Hardlink,
+            Some("copy") => Self::Copy,
+            Some("clone-or-copy") => Self::CloneOrCopy,
+            _ => Self::Auto,
+        }
+    }
+
+    fn clones(self) -> bool {
+        matches!(self, Self::Auto | Self::CloneOrCopy)
+    }
+
+    fn links(self) -> bool {
+        matches!(self, Self::Auto | Self::Hardlink)
+    }
 }
 
 impl CloneStrategy {
@@ -56,7 +83,16 @@ impl CloneStrategy {
     }
 
     pub(super) fn clone_tree(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
-        clone_tree(source, destination, self)
+        clone_tree(source, destination, self, ImportMethod::CloneOrCopy)
+    }
+
+    pub(super) fn import_tree(
+        &self,
+        source: &Path,
+        destination: &Path,
+        method: ImportMethod,
+    ) -> std::io::Result<()> {
+        clone_tree(source, destination, self, method)
     }
 }
 
@@ -214,9 +250,15 @@ fn validate_cloned_tree(path: &Path, depth: usize) -> std::io::Result<()> {
     Ok(())
 }
 
-fn clone_tree(source: &Path, destination: &Path, strategy: &CloneStrategy) -> std::io::Result<()> {
+fn clone_tree(
+    source: &Path,
+    destination: &Path,
+    strategy: &CloneStrategy,
+    method: ImportMethod,
+) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
-    if fs::symlink_metadata(source).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+    if method.clones()
+        && fs::symlink_metadata(source).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         && clone_file(source, destination)?
     {
         // clonefile also clones symlinks; validate before the package can be placed.
@@ -226,7 +268,7 @@ fn clone_tree(source: &Path, destination: &Path, strategy: &CloneStrategy) -> st
         }
         return Ok(());
     }
-    clone_tree_files(source, destination, 0, None, strategy)
+    clone_tree_files(source, destination, 0, None, strategy, method, None)
 }
 
 fn clone_tree_files(
@@ -235,6 +277,8 @@ fn clone_tree_files(
     depth: usize,
     supported: Option<bool>,
     strategy: &CloneStrategy,
+    method: ImportMethod,
+    kind: Option<fs::FileType>,
 ) -> std::io::Result<()> {
     if depth > 128 {
         return Err(std::io::Error::new(
@@ -242,39 +286,138 @@ fn clone_tree_files(
             "package cache nesting exceeds 128 levels",
         ));
     }
-    let metadata = fs::symlink_metadata(source)?;
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+    let metadata = match kind {
+        Some(kind) if !kind.is_dir() => None,
+        _ => Some(fs::symlink_metadata(source)?),
+    };
+    let kind = metadata.as_ref().map(|m| m.file_type()).or(kind).unwrap();
+    if kind.is_dir() && !super::tree::is_link(metadata.as_ref().unwrap()) {
         fs::create_dir(destination)?;
+        let entries = fs::read_dir(source)?
+            .map(|entry| {
+                let entry = entry?;
+                let kind = entry.file_type()?;
+                Ok((entry, kind))
+            })
+            .collect::<std::io::Result<Vec<_>>>()?;
         let mut supported = supported;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            if supported.is_none() && entry.file_type()?.is_file() {
-                supported =
-                    Some(strategy.supported(&entry.path(), &destination.join(entry.file_name()))?);
-            }
+        if method.clones()
+            && supported.is_none()
+            && let Some((entry, _)) = entries.iter().find(|(_, kind)| kind.is_file())
+        {
+            supported =
+                Some(strategy.supported(&entry.path(), &destination.join(entry.file_name()))?);
+        }
+        let import = |(entry, kind): &(fs::DirEntry, fs::FileType)| {
             clone_tree_files(
                 &entry.path(),
                 &destination.join(entry.file_name()),
                 depth + 1,
                 supported,
                 strategy,
-            )?;
+                method,
+                Some(*kind),
+            )
+        };
+        if method.links() && depth == 0 && entries.len() > 256 {
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = entries
+                    .chunks(entries.len().div_ceil(4))
+                    .map(|chunk| {
+                        let import = &import;
+                        scope.spawn(move || chunk.iter().try_for_each(import))
+                    })
+                    .collect();
+                for worker in workers {
+                    worker
+                        .join()
+                        .map_err(|_| std::io::Error::other("package import worker panicked"))??;
+                }
+                Ok::<_, std::io::Error>(())
+            })?;
+        } else {
+            entries.iter().try_for_each(import)?;
         }
-        fs::set_permissions(destination, metadata.permissions())?;
+        fs::set_permissions(destination, metadata.unwrap().permissions())?;
         return Ok(());
     }
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if !kind.is_file() || kind.is_symlink() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "package cache contains a link or special file",
         ));
     }
-    let supported = match supported {
-        Some(supported) => supported,
-        None => strategy.supported(source, destination)?,
-    };
-    if !supported || !clone_file(source, destination)? {
+    if method.clones() {
+        let supported = match supported {
+            Some(supported) => supported,
+            None => strategy.supported(source, destination)?,
+        };
+        if supported && clone_file(source, destination)? {
+            return Ok(());
+        }
+    }
+    if method.links() {
+        return hardlink_or_copy(source, destination, |source, dest| {
+            fs::hard_link(source, dest)
+        });
+    }
+    fs::copy(source, destination)?;
+    Ok(())
+}
+
+fn hardlink_or_copy(
+    source: &Path,
+    destination: &Path,
+    link: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if link(source, destination).is_err() {
         fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+pub(super) fn detach_file(path: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "cannot detach a link or special file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() <= 1 {
+            return Ok(());
+        }
+    }
+    let temporary = tempfile::NamedTempFile::new_in(
+        path.parent()
+            .ok_or_else(|| std::io::Error::other("missing file parent"))?,
+    )?;
+    fs::copy(path, temporary.path())?;
+    temporary.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+pub(super) fn detach_tree(path: &Path, depth: usize) -> std::io::Result<()> {
+    if depth > 128 {
+        return Err(std::io::Error::other("package nesting exceeds 128 levels"));
+    }
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if super::tree::is_link(&metadata) {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            detach_tree(&entry?.path(), depth + 1)?;
+        }
+    } else if metadata.is_file() {
+        detach_file(path)?;
     }
     Ok(())
 }
@@ -634,7 +777,7 @@ mod tests {
         fs::write(source.join("nested/file.js"), b"original").unwrap();
 
         CloneStrategy::default()
-            .clone_tree(&source, &destination)
+            .import_tree(&source, &destination, ImportMethod::Copy)
             .unwrap();
         fs::write(destination.join("nested/file.js"), b"modified").unwrap();
 
@@ -647,6 +790,123 @@ mod tests {
             b"modified"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn auto_links_after_an_unsupported_clone_and_detaches_before_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("file"), "original").unwrap();
+        let strategy = CloneStrategy::default();
+        let device = fs::metadata(&source).unwrap().dev();
+        strategy
+            .devices
+            .lock()
+            .unwrap()
+            .insert((device, device), false);
+        let dest = root.path().join("destination");
+        strategy
+            .import_tree(&source, &dest, ImportMethod::Auto)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(source.join("file")).unwrap().ino(),
+            fs::metadata(dest.join("file")).unwrap().ino()
+        );
+        assert!(fs::metadata(dest.join("file")).unwrap().nlink() > 1);
+        detach_file(&dest.join("file")).unwrap();
+        fs::write(dest.join("file"), "modified").unwrap();
+        assert_eq!(fs::read_to_string(source.join("file")).unwrap(), "original");
+    }
+
+    #[test]
+    fn hardlink_import_copies_across_devices() {
+        for kind in [
+            std::io::ErrorKind::CrossesDevices,
+            std::io::ErrorKind::Unsupported,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            let dest = root.path().join("dest");
+            fs::write(&source, "original").unwrap();
+            hardlink_or_copy(&source, &dest, |_, _| Err(std::io::Error::from(kind))).unwrap();
+            assert_eq!(fs::read_to_string(&dest).unwrap(), "original");
+            fs::write(&dest, "changed").unwrap();
+            assert_eq!(fs::read_to_string(&source).unwrap(), "original");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn large_packages_link_in_parallel_and_still_reject_links() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        for n in 0..300 {
+            fs::write(source.join(format!("file-{n}")), "content").unwrap();
+        }
+        let dest = root.path().join("dest");
+        let strategy = CloneStrategy::default();
+        strategy
+            .import_tree(&source, &dest, ImportMethod::Hardlink)
+            .unwrap();
+        for n in 0..300 {
+            assert_eq!(
+                fs::metadata(source.join(format!("file-{n}")))
+                    .unwrap()
+                    .ino(),
+                fs::metadata(dest.join(format!("file-{n}"))).unwrap().ino()
+            );
+        }
+        std::os::unix::fs::symlink(root.path(), source.join("escape")).unwrap();
+        assert!(
+            strategy
+                .import_tree(&source, &root.path().join("unsafe"), ImportMethod::Hardlink)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn all_import_methods_handle_empty_and_missing_trees() {
+        for method in [
+            ImportMethod::Auto,
+            ImportMethod::Copy,
+            ImportMethod::Hardlink,
+            ImportMethod::CloneOrCopy,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("empty");
+            fs::create_dir(&source).unwrap();
+            let dest = root.path().join("dest");
+            let strategy = CloneStrategy::default();
+            strategy.import_tree(&source, &dest, method).unwrap();
+            assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
+            assert!(
+                strategy
+                    .import_tree(
+                        &root.path().join("missing"),
+                        &root.path().join("other"),
+                        method
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlink_import_rejects_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        std::os::unix::fs::symlink(root.path(), source.join("escape")).unwrap();
+        assert!(
+            CloneStrategy::default()
+                .import_tree(&source, &root.path().join("dest"), ImportMethod::Hardlink)
+                .is_err()
+        );
     }
 
     #[cfg(unix)]

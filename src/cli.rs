@@ -22,6 +22,7 @@ pub struct Options {
     pub userconfig: Option<String>,
     pub globalconfig: Option<String>,
     pub node_linker: Option<String>,
+    pub package_import_method: Option<String>,
     pub store_dir: Option<PathBuf>,
     pub preid: Option<String>,
     pub no_git_tag: bool,
@@ -95,7 +96,7 @@ const COMMANDS: &[&str] = &[
 ];
 
 const HELP: &str = "tnpm - A fast, small npm-compatible package manager\n\nUsage: tnpm [OPTIONS] <COMMAND|SCRIPT> [ARGS...]\n\nCommands:\n  ls, fund, version, upgrade, view, get, cache\n  install (alias: i, add)\n  uninstall (alias: remove, rm)\n  exec (alias: x)\n  explain (alias: why), rebuild, audit\n  ci, init\n  create\n  alias create, alias delete\n  outdated, update, prune, run\n\nOptions:\n  --json  --no-cache  --prefix <PATH>  --registry <URL>\n  --global, -g  --workspace, -w <NAME|PATH>  --workspaces\n  --engine-strict  --trust <PACKAGE>\n  --parallel  --topological  --concurrency <N>  --audit-level <LEVEL>\n  --userconfig <PATH>  --globalconfig <PATH>  --latest
-  --node-linker <hoisted|isolated>  --store-dir <PATH>\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --no-legacy-peer-deps  --strict-peer-deps  --force, -f\n  --offline  --save-dev, -D  --save-optional, -O\n  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
+  --node-linker <hoisted|isolated>  --store-dir <PATH>\n  --package-import-method <auto|hardlink|copy|clone-or-copy>\n  --all, -a  --depth <N>  --preid <ID>  --no-git-tag-version\n  --allow-same-version  --ignore-scripts  --legacy-peer-deps\n  --no-legacy-peer-deps  --strict-peer-deps  --force, -f\n  --offline  --save-dev, -D  --save-optional, -O\n  --save-exact, -E  --no-save  --save, -S\n  --package-lock-only  --omit <TYPES>  --production  --if-present\n  --yes, -y  --call, -c <COMMAND>  --package, -p <PACKAGE>  --plain\n  -h, --help  -V, --version\n";
 
 const PUBLISH_HELP: &str = "\nAuthentication and publication:\n  login, adduser, logout, whoami\n  pack [DIRECTORY], publish [DIRECTORY]\n  dist-tag <ls [PACKAGE]|add PACKAGE@VERSION [TAG]|rm PACKAGE TAG>\n  --auth-type <web|legacy>  --scope <SCOPE>  --otp <CODE>\n  --tag <TAG>  --access <public|restricted>  --dry-run\n  --pack-destination <PATH>\n";
 
@@ -122,6 +123,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                     | "--userconfig"
                     | "--globalconfig"
                     | "--node-linker"
+                    | "--package-import-method"
                     | "--store-dir"
                     | "--depth"
                     | "--preid"
@@ -173,6 +175,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
                 "--userconfig" => options.userconfig = value,
                 "--globalconfig" => options.globalconfig = value,
                 "--node-linker" => options.node_linker = value,
+                "--package-import-method" => options.package_import_method = value,
                 "--store-dir" => options.store_dir = value.map(PathBuf::from),
                 "--auth-type" => options.auth_type = value,
                 "--scope" => options.scope = value,
@@ -311,6 +314,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Option<Op
         .is_some_and(|s| !matches!(s, "hoisted" | "isolated"))
     {
         bail!("--node-linker must be hoisted or isolated");
+    }
+    if options
+        .package_import_method
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "auto" | "hardlink" | "copy" | "clone-or-copy"))
+    {
+        bail!("--package-import-method must be auto, hardlink, copy or clone-or-copy");
     }
     if let Some(scope) = &options.scope {
         let scope = scope.strip_prefix('@').unwrap_or(scope);

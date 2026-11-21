@@ -6,6 +6,7 @@ mod cache;
 mod config;
 mod explain;
 mod extended_install;
+mod import_method;
 mod install;
 mod isolated;
 mod jsr;

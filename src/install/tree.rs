@@ -357,10 +357,11 @@ fn link_bins(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::{PermissionsExt, symlink};
-                fs::set_permissions(
-                    &source,
-                    fs::Permissions::from_mode(fs::metadata(&source)?.permissions().mode() | 0o111),
-                )?;
+                let mode = fs::metadata(&source)?.permissions().mode();
+                if mode & 0o111 != 0o111 {
+                    store::detach_file(&source)?;
+                    fs::set_permissions(&source, fs::Permissions::from_mode(mode | 0o111))?;
+                }
                 let destination = dir.join(&name);
                 if fs::symlink_metadata(&destination).is_ok() {
                     continue;
@@ -382,6 +383,17 @@ fn link_bins(
     Ok(())
 }
 
+fn detach_graph(ctx: &Context<'_>, root: &Path, lock: &Lockfile) -> Result<()> {
+    store::detach_tree(&root.join("node_modules"), 0)?;
+    for entry in lock.packages.values().filter(|entry| flag(entry, "link")) {
+        store::detach_tree(
+            &super::sources::workspace_target(ctx, entry)?.join("node_modules"),
+            0,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) async fn materialize(
     ctx: &Context<'_>,
     root: &Path,
@@ -389,6 +401,7 @@ pub(super) async fn materialize(
     lock: &Lockfile,
     clean: bool,
 ) -> Result<()> {
+    let mut profile = crate::profile::Profile::new("materialize");
     ctx.warn_peers(lock);
     let was_isolated = super::isolated::active(root);
     if was_isolated {
@@ -442,6 +455,7 @@ pub(super) async fn materialize(
         selected.insert(path.clone());
     }
     retain_reachable(lock, manifest, &mut selected)?;
+    profile.mark("validation_ms");
     if ctx.config.get("node-linker") == Some("isolated")
         && super::isolated::try_install(ctx, root, manifest, lock, &mut selected, scripts_enabled)
             .await?
@@ -466,6 +480,13 @@ pub(super) async fn materialize(
         }
     }
     if scripts_enabled {
+        if manifest
+            .get("scripts")
+            .and_then(|s| s.str("preinstall"))
+            .is_some()
+        {
+            detach_graph(ctx, root, lock)?;
+        }
         ctx.lifecycle(root, manifest, "preinstall")?;
     }
     fs::create_dir_all(root.join("node_modules"))?;
@@ -520,6 +541,8 @@ pub(super) async fn materialize(
     if !jobs.is_empty() {
         fs::create_dir(&stage)?;
     }
+    let import_method = store::ImportMethod::configured(ctx);
+    profile.mark("scan_schedule_ms");
     let result = async {
         let results: Vec<_> = stream::iter(jobs.iter().enumerate().map(|(i, path)| {
             let destination = stage.join(i.to_string());
@@ -541,9 +564,10 @@ pub(super) async fn materialize(
                             .event("prepare", &format!("clone package cache {path}"));
                         let dest = destination.clone();
                         let clones = ctx.clones.clone();
-                        let cache_hit =
-                            tokio::task::spawn_blocking(move || clones.clone_tree(&cached, &dest))
-                                .await?;
+                        let cache_hit = tokio::task::spawn_blocking(move || {
+                            clones.import_tree(&cached, &dest, import_method)
+                        })
+                        .await?;
                         if cache_hit.is_ok() {
                             super::bundles::strip_modules(entry, &destination)?;
                             return Ok::<_, anyhow::Error>(());
@@ -561,17 +585,34 @@ pub(super) async fn materialize(
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         fs::create_dir_all(&dest)?;
                         unpack(&bytes, &dest).context("could not unpack tarball")?;
-                        if let Some(cache) = cache
-                            && let Err(error) = cache_extracted_package(
+                        if let Some(cache) = cache {
+                            let missing = !cache.exists();
+                            match cache_extracted_package(
                                 &dest,
                                 &cache,
                                 integrity.as_deref(),
                                 &clones,
-                            )
-                        {
-                            crate::util::style::progress::message(format_args!(
-                                "tnpm: could not cache extracted package: {error}"
-                            ));
+                            ) {
+                                Err(error) => crate::util::style::progress::message(format_args!(
+                                    "tnpm: could not cache extracted package: {error}"
+                                )),
+                                Ok(())
+                                    if missing
+                                        && matches!(
+                                            import_method,
+                                            store::ImportMethod::Auto
+                                                | store::ImportMethod::Hardlink
+                                        ) =>
+                                {
+                                    if let Some(cached) =
+                                        cached_package(&cache, integrity.as_deref())
+                                    {
+                                        remove_path(&dest)?;
+                                        clones.import_tree(&cached, &dest, import_method)?;
+                                    }
+                                }
+                                Ok(()) => {}
+                            }
                         }
                         Ok(())
                     })
@@ -599,6 +640,7 @@ pub(super) async fn materialize(
         .buffer_unordered(CONCURRENCY)
         .collect()
         .await;
+        profile.mark("prepare_ms");
         let mut prepared = BTreeMap::new();
         for (path, destination, result) in results {
             match result {
@@ -647,7 +689,39 @@ pub(super) async fn materialize(
                 ctx.progress.finish("remove", path, "removed");
             }
         }
+        profile.mark("placement_ms");
         let tree_unchanged = changed.is_empty() && installed.packages.keys().eq(selected.iter());
+        if scripts_enabled {
+            let mut hooks = [
+                "preinstall",
+                "install",
+                "postinstall",
+                "prepublish",
+                "preprepare",
+                "prepare",
+                "postprepare",
+            ]
+            .iter()
+            .any(|event| manifest.get("scripts").and_then(|s| s.str(event)).is_some())
+                || scripts::implicit_native(root, manifest);
+            for path in &selected {
+                if hooks {
+                    break;
+                }
+                let directory = root.join(path);
+                if let Some(data) = manifest::read(&directory)? {
+                    hooks = trust.allows(&lock.packages[path], &data)
+                        && super::trust::Trust::has_scripts(
+                            &directory,
+                            &data,
+                            &lock.packages[path],
+                        );
+                }
+            }
+            if hooks {
+                detach_graph(ctx, root, lock)?;
+            }
+        }
         let bins_exist = selected.iter().all(|path| {
             let data = &lock.packages[path];
             let modules = root.join(lockfile::parent(path)).join("node_modules/.bin");
@@ -659,6 +733,7 @@ pub(super) async fn materialize(
             ctx.progress.event("place", "linking package binaries");
             link_bins(ctx, root, &selected, lock)?;
         }
+        profile.mark("bins_ms");
         if scripts_enabled {
             // Nested dependencies first; all binaries already exist before any lifecycle hook.
             let mut order: Vec<_> = selected.iter().cloned().collect();
@@ -805,6 +880,7 @@ pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
     // A failed rebuild must not leave an old successful-build marker behind.
     remove_path(&root.join("node_modules/.tnpm-lock.json"))?;
     let mut count = 0;
+    let mut detached = false;
     if enabled {
         for path in order {
             let directory = root.join(&path);
@@ -817,6 +893,10 @@ pub(super) fn rebuild(ctx: &Context<'_>, root: &Path) -> Result<()> {
                 super::trust::Trust::warn(&path, &data);
                 builds.remove(&path);
                 continue;
+            }
+            if !detached {
+                detach_graph(ctx, root, &installed)?;
+                detached = true;
             }
             for event in ["preinstall", "install", "postinstall", "prepare"] {
                 if event == "prepare" && entry.get("tnpmSpec").is_none() {

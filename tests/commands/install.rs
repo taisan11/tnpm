@@ -319,6 +319,7 @@ fn lock_only_and_no_save_do_not_modify_unrelated_state() {
 #[test]
 fn stale_hidden_lock_is_not_trusted() {
     let f = Fixture::new();
+    f.file(".npmrc", "package-import-method=copy\n");
     f.single("app", "");
     f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
     f.ok(&["install", "--ignore-scripts"]);

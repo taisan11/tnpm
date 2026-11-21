@@ -297,6 +297,7 @@ fn offline_resolution_uses_full_metadata_when_abbreviated_versions_are_stale() {
 #[test]
 fn hidden_lock_timestamp_ties_do_not_hide_manifest_edits() {
     let f = Fixture::new();
+    f.file(".npmrc", "package-import-method=copy\n");
     f.single("app", "");
     f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
     f.ok(&["install", "--ignore-scripts"]);
