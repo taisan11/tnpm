@@ -442,6 +442,12 @@ pub(super) async fn materialize(
         selected.insert(path.clone());
     }
     retain_reachable(lock, manifest, &mut selected)?;
+    if ctx.config.get("node-linker") == Some("isolated")
+        && super::isolated::try_install(ctx, root, manifest, lock, &mut selected, scripts_enabled)
+            .await?
+    {
+        return Ok(());
+    }
     if clean {
         let mut workspace_modules = BTreeSet::new();
         for path in &selected {

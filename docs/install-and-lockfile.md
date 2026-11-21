@@ -35,7 +35,9 @@ store-dir=~/.tnpm/cache
 ```
 
 - `isolated`: `node_modules/.tnpm/<id>/node_modules/<package>` に各依存の実体を配置し、プロジェクト直下と各パッケージから、宣言済みの依存だけをディレクトリリンクで参照します。peer と optional 依存も解決済み lockfile に従います。
-- `store-dir`: 共有パッケージストアの親ディレクトリ（既定 `~/.tnpm/cache`）。展開済み取得用は `packages-v2/`、分離配置の内容アドレス付きファイル用は `files-v1/` です。分離配置ではファイル単位で **`fs::hard_link` のみ**を使い、CoW や通常コピーへのフォールバックはしません。取得後の一時配置で lifecycle script を実行し、その最終内容を SHA-256 でストアに登録してからハードリンクします。`-g` とは別機能です。
+- `store-dir`: 共有パッケージストアの親ディレクトリ（既定 `~/.tnpm/cache`）。展開済み取得用は `packages-v2/`、分離配置の内容アドレス付きファイル用は `files-v1/` です。分離配置ではファイル単位で **`fs::hard_link` のみ**を使い、CoW や通常コピーへのフォールバックはしません。未登録のファイルは SHA-256 で検証・登録し、既存の正常な object はコピー・fsync せず再利用します。`-g` とは別機能です。
+- 通常のレジストリ依存で lifecycle hook の実行が不要な場合、`files-index-v1/` のパッケージ別索引から staging へ直接ハードリンクし、巻き上げ配置のコピーを経由せず分離配置を構築します。索引は integrity・取得 URL・lockfile のパッケージ情報に結び付け、相対ファイルパス・SHA-256 object 名・空ディレクトリ・bin の実行属性を保持して atomic に更新します。warm install は object の種別・サイズ・更新日時・権限（Unix ではデバイスと inode も）を確認し、変更のない object の再ハッシュを省きます。リンク数の変更でも変わる ctime は使いません。欠損・変更を検出した場合は展開済みキャッシュまたは integrity を検証した tarball から補修し、正常な object は再発行しません。索引があれば `packages-v2/` を削除した後でも offline 配置できます。ローカルキャッシュのメタデータを信頼する最適化であり、ファイル内容と更新日時などを意図的に同時改ざんする攻撃の検出は保証しません。
+- 許可された依存 hook またはルート hook が動く場合は、従来どおり独立した hoisted staging で全 hook を実行した後にハードリンク化します。hook は別パッケージを書き換えられるため、そのパッケージだけでなく依存グラフ全体をこの経路に戻します。ビルド済みの内容を未実行のパッケージ索引へ保存しません。workspace・`file:` / Git / URL・bundled 依存、認証付き取得や `--no-cache` も従来経路を使用します。
 - 配置方式の切り替え時と分離配置への再インストール時は `node_modules` を再構築します。lockfile の形式は変わりません。
 - 分離配置では現在 `rebuild` と通常の `prune` に未対応です。`tnpm install` で再配置するか、`tnpm prune --all` で全削除してください。依存 lifecycle script は現時点では hoisted の一時配置で実行後、分離リンクへ変換されます。
 - Windows の依存ディレクトリリンクには、特別なシンボリックリンク権限を要求しない NTFS Junction（`mklink /J` 相当）を使用します。Linux/macOS はディレクトリ symlink です。ファイルのハードリンクには Windows の NTFS と同じボリューム、または Unix の同一ファイルシステムが必要です。異なるボリュームに設定した場合はコピーで代替せずエラーを返します。

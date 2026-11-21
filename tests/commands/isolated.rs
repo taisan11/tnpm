@@ -4,6 +4,287 @@ use std::fs;
 
 #[cfg(unix)]
 #[test]
+fn indexed_install_works_without_extracted_cache_and_preserves_bins() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let f = Fixture::new();
+    f.single(
+        "app",
+        r#", "bin":{"app":"bin/cli.sh"}, "dependencies":{"sub":"1"}"#,
+    );
+    f.single("sub", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    let original = fs::metadata(f.root.join("node_modules/app/index.js")).unwrap();
+    fs::remove_dir_all(f.root.join("node_modules")).unwrap();
+    fs::remove_dir_all(f.root.join("home/.tnpm/cache/packages-v2")).unwrap();
+    let requests = f.requests.lock().unwrap().len();
+    let output = f.invoke(&["install", "--node-linker=isolated", "--offline"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("hardlink indexed package"));
+    fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+    let output = f.invoke(&["install", "--node-linker=isolated", "--offline"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("hardlink indexed package"));
+    assert_eq!(requests, f.requests.lock().unwrap().len());
+    f.file("package.json", r#"{"devDependencies":{"app":"1"}}"#);
+    let output = f.invoke(&["install", "--node-linker=isolated", "--offline"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("hardlink indexed package node_modules/app")
+    );
+    let installed = fs::metadata(f.root.join("node_modules/app/index.js")).unwrap();
+    assert_eq!(original.ino(), installed.ino());
+    assert!(installed.nlink() >= 2);
+    assert!(
+        f.root
+            .join("node_modules/app/node_modules/sub/package.json")
+            .is_file()
+    );
+    assert!(!f.root.join("node_modules/sub").exists());
+    assert!(
+        fs::metadata(f.root.join("node_modules/.bin/app"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111
+            != 0
+    );
+    assert!(
+        fs::read_dir(f.root.join("home/.tnpm/cache/tmp-v1"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_and_corrupt_indexed_objects_are_repaired_without_replacing_other_objects() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    let index_dir = f.root.join("home/.tnpm/cache/files-index-v1");
+    let index_path = fs::read_dir(&index_dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(index_path).unwrap();
+    let index = nojson::RawJson::parse(&text).unwrap();
+    let object: String = index
+        .value()
+        .to_member("files")
+        .unwrap()
+        .required()
+        .unwrap()
+        .to_member("index.js")
+        .unwrap()
+        .required()
+        .unwrap()
+        .to_member("object")
+        .unwrap()
+        .required()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let object = f
+        .root
+        .join("home/.tnpm/cache/files-v1")
+        .join(&object[..2])
+        .join(&object);
+    let manifest = f.root.join("node_modules/app/package.json");
+    let untouched = fs::metadata(&manifest).unwrap().ino();
+    fs::remove_file(&object).unwrap();
+    f.ok(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert_eq!(fs::metadata(&manifest).unwrap().ino(), untouched);
+    fs::set_permissions(&object, fs::Permissions::from_mode(0o644)).unwrap();
+    f.ok(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert_eq!(
+        fs::metadata(&object).unwrap().permissions().mode() & 0o222,
+        0
+    );
+    assert_eq!(fs::metadata(&manifest).unwrap().ino(), untouched);
+    fs::set_permissions(&object, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&object, b"corrupted contents\n").unwrap();
+    f.ok(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/app/index.js")).unwrap(),
+        "module.exports = 42;\n"
+    );
+    assert_eq!(fs::metadata(&manifest).unwrap().ino(), untouched);
+}
+
+#[cfg(unix)]
+#[test]
+fn isolated_hooks_run_before_linking_even_when_pristine_indices_exist() {
+    let f = Fixture::new();
+    f.single(
+        "app",
+        r#", "dependencies":{"sub":"1"}, "scripts":{"install":"echo modified > ../sub/index.js"}"#,
+    );
+    f.single("sub", "");
+    f.file(
+        "package.json",
+        r#"{"dependencies":{"app":"1"},"trustedDependencies":["app"]}"#,
+    );
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    f.ok(&["install", "--node-linker=isolated", "--offline"]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/app/node_modules/sub/index.js")).unwrap(),
+        "modified\n"
+    );
+    f.ok(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/app/node_modules/sub/index.js")).unwrap(),
+        "module.exports = 42;\n"
+    );
+}
+
+#[test]
+fn isolated_empty_graph_and_invalid_index_paths() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    let path = fs::read_dir(f.root.join("home/.tnpm/cache/files-index-v1"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"index.js\":", "\"../escape\":");
+    fs::write(path, text).unwrap();
+    let output = f.invoke(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsafe package index path"));
+    assert!(!f.root.join("escape").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn indexed_store_symlinks_are_rejected_without_touching_the_target() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    let index_path = fs::read_dir(f.root.join("home/.tnpm/cache/files-index-v1"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(index_path).unwrap();
+    let index = nojson::RawJson::parse(&text).unwrap();
+    let object: String = index
+        .value()
+        .to_member("files")
+        .unwrap()
+        .required()
+        .unwrap()
+        .to_member("index.js")
+        .unwrap()
+        .required()
+        .unwrap()
+        .to_member("object")
+        .unwrap()
+        .required()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let object = f
+        .root
+        .join("home/.tnpm/cache/files-v1")
+        .join(&object[..2])
+        .join(&object);
+    fs::remove_file(&object).unwrap();
+    f.file("untouched", "original");
+    symlink(f.root.join("untouched"), &object).unwrap();
+    let output = f.invoke(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symlink"));
+    assert_eq!(
+        fs::read_to_string(f.root.join("untouched")).unwrap(),
+        "original"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn root_hooks_still_run_before_hardlink_conversion() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"},"scripts":{"postinstall":"echo root-built > node_modules/app/index.js"}}"#);
+    f.ok(&["install", "--node-linker=isolated", "--ignore-scripts"]);
+    f.ok(&["install", "--node-linker=isolated", "--offline"]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/app/index.js")).unwrap(),
+        "root-built\n"
+    );
+    f.ok(&[
+        "install",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+        "--offline",
+    ]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("node_modules/app/index.js")).unwrap(),
+        "module.exports = 42;\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn isolated_layout_resolves_conflicting_transitive_versions_without_exposing_them() {
     let f = Fixture::new();
     f.releases("shared", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
