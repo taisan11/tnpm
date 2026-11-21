@@ -88,7 +88,7 @@ fn checked_url(text: &str) -> Result<Url> {
 }
 
 fn checksum(source: &str) -> String {
-    format!("{:x}", Sha256::digest(source.as_bytes()))
+    const_hex::encode(Sha256::digest(source.as_bytes()))
 }
 
 fn media_extension(url: &Url, media: &str) -> Result<&'static str> {
@@ -167,8 +167,8 @@ pub(super) async fn fetch(settings: &Settings, text: &str) -> Result<Value> {
         .then(|| {
             dirs::home_dir().map(|home| {
                 home.join(".tnpm/cache/modules-v1").join(format!(
-                    "{:x}.json",
-                    Sha256::digest(requested.as_str().as_bytes())
+                    "{}.json",
+                    const_hex::encode(Sha256::digest(requested.as_str().as_bytes()))
                 ))
             })
         })

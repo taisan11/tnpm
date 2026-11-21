@@ -7,19 +7,23 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
 
-VERSION = "0.23.0-ts7.1.0-beta"
+VERSION = "7.1.0-beta.tsrs4"
 
 
 def main() -> None:
+    npm = shutil.which("npm")
+    if npm is None:
+        raise RuntimeError("npm was not found on PATH; install Node.js and npm to bundle tsrs")
     with tempfile.TemporaryDirectory(prefix="tnpm-tsrs-") as temporary:
         root = Path(temporary)
         subprocess.run(
             [
-                "npm", "install", "--prefix", str(root),
+                npm, "install", "--prefix", str(root),
                 "--ignore-scripts", "--no-save", "--no-package-lock",
                 "--no-audit", "--no-fund", f"tsrs@{VERSION}",
             ],

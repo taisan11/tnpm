@@ -761,7 +761,10 @@ fn source_tarball_cache(ctx: &Context<'_>, entry: &Value) -> Option<PathBuf> {
     Some(
         dirs::home_dir()?
             .join(".tnpm/cache/source-tarballs-v1")
-            .join(format!("{:x}.tgz", Sha256::digest(key.as_bytes()))),
+            .join(format!(
+                "{}.tgz",
+                const_hex::encode(Sha256::digest(key.as_bytes()))
+            )),
     )
 }
 

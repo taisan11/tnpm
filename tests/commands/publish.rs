@@ -238,7 +238,7 @@ fn publish_puts_authenticated_metadata_and_integrity_verified_attachment() {
     );
     assert_eq!(
         string(&data, &["versions", "1.2.3", "dist", "shasum"]),
-        format!("{:x}", sha1::Sha1::digest(&tarball))
+        const_hex::encode(sha1::Sha1::digest(&tarball))
     );
     assert_eq!(
         string(&data, &["versions", "1.2.3", "dist", "tarball"]),
