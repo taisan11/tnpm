@@ -164,20 +164,27 @@ async fn send_with_retry(request: &reqwest::RequestBuilder) -> Result<reqwest::R
 
 pub fn fetch_offline(url: &reqwest::Url, query: Query<'_>) -> Result<Package> {
     let key = metadata_key(url, query);
-    let key = key.as_str();
-    if let Some(document) = DOCUMENTS.with(|documents| documents.borrow().get(key)) {
-        return resolve_binary(&document, query);
+    let mut error = None;
+    for key in std::iter::once(key.as_str()).chain((!query.metadata).then_some(url.as_str())) {
+        let document = match DOCUMENTS.with(|documents| documents.borrow().get(key)) {
+            Some(document) => Some(document),
+            None => Cache::home()
+                .context("offline registry cache is unavailable")?
+                .load(key)?
+                .map(Rc::new),
+        };
+        let Some(document) = document else { continue };
+        remember(key, document.clone());
+        // Explicit offline mode permits stale metadata, but never a network fallback.
+        match resolve_binary(&document, query) {
+            Ok(package) => return Ok(package),
+            Err(failure) => error = Some(failure),
+        }
     }
-    let cache = Cache::home().context("offline registry cache is unavailable")?;
-    let mut document = cache.load(key)?;
-    if document.is_none() && !query.metadata {
-        document = cache.load(url.as_str())?;
+    if let Some(error) = error {
+        return Err(error);
     }
-    let document = document.with_context(|| format!("ENOTCACHED: {url}"))?;
-    let document = Rc::new(document);
-    remember(key, document.clone());
-    // Explicit offline mode permits stale metadata, but never a network fallback.
-    resolve_binary(&document, query)
+    bail!("ENOTCACHED: {url}")
 }
 
 pub async fn fetch_using(

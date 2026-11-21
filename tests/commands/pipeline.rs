@@ -268,6 +268,31 @@ fn full_metadata_cache_still_supports_offline_resolution() {
     assert!(f.root.join("tnpm-lock.json").is_file());
 }
 
+#[test]
+fn offline_resolution_uses_full_metadata_when_abbreviated_versions_are_stale() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    f.ok(&["install", "--package-lock-only"]);
+    f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    f.ok(&["view", "app", "version"]);
+    let requests = f.requests.lock().unwrap().len();
+    f.file("package.json", r#"{"dependencies":{"app":"2"}}"#);
+    f.ok(&["install", "--package-lock-only", "--offline"]);
+    assert!(
+        fs::read_to_string(f.root.join("tnpm-lock.json"))
+            .unwrap()
+            .contains("2.0.0")
+    );
+    f.file("package.json", r#"{"dependencies":{"app":"3"}}"#);
+    assert!(
+        !f.invoke(&["install", "--package-lock-only", "--offline"])
+            .status
+            .success()
+    );
+    assert_eq!(requests, f.requests.lock().unwrap().len());
+}
+
 #[cfg(unix)]
 #[test]
 fn hidden_lock_timestamp_ties_do_not_hide_manifest_edits() {
