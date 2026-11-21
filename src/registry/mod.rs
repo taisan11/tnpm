@@ -11,6 +11,7 @@ use crate::{
     util::style::progress::Progress,
 };
 use anyhow::{Context, Result, bail};
+use nojson::{JsonValueKind, RawJson, RawJsonValue};
 use rustc_hash::FxHashMap;
 use std::{
     borrow::Cow,
@@ -322,6 +323,9 @@ pub async fn fetch_using(
             cache_warning(cache.remove(&key));
         }
         profile.mark("policy_ms");
+        if query.metadata && (no_cache || !policy.can_store()) {
+            return read_uncached_view(response, query, &mut profile).await;
+        }
         // reqwest expands compressed bodies; nojson still handles JSON parsing.
         let body = response_body(response).await?;
         profile.mark("body_ms");
@@ -451,6 +455,85 @@ fn checked_package(metadata: Value, versions: Vec<Value>) -> Result<Package> {
         bail!("registry version must contain an object");
     }
     Ok(Package { metadata, versions })
+}
+
+async fn read_uncached_view(
+    response: reqwest::Response,
+    query: Query<'_>,
+    profile: &mut Profile,
+) -> Result<Package> {
+    let body = response_body(response).await?;
+    profile.mark("body_ms");
+    profile.number("decoded_body_bytes", body.len() as u64);
+    let text =
+        simdutf8::compat::from_utf8(&body).context("registry metadata is not valid UTF-8")?;
+    profile.mark("utf8_ms");
+    let raw = RawJson::parse(text).context("could not parse registry metadata")?;
+    profile.mark("json_parse_ms");
+    // A one-shot view does not need a full cache document or an owned versions tree.
+    let package = match resolve_exact_view(raw.value(), query)? {
+        Some(package) => package,
+        None => resolve_json(
+            &Value::from_raw(raw.value()).context("could not parse registry metadata")?,
+            query,
+        )?,
+    };
+    profile.mark("resolve_ms");
+    profile.number("cache_write_ms", 0);
+    drop(raw);
+    profile.mark("json_tree_drop_ms");
+    profile.text("source", "network");
+    Ok(package)
+}
+
+fn resolve_exact_view(value: RawJsonValue<'_, '_>, query: Query<'_>) -> Result<Option<Package>> {
+    let versions = value
+        .to_member("versions")
+        .ok()
+        .and_then(|m| m.optional())
+        .filter(|v| v.kind() == JsonValueKind::Object)
+        .context("registry response has no versions object")?;
+    let exact = value
+        .to_path_member(&["dist-tags", query.selector])
+        .ok()
+        .and_then(|m| m.optional())
+        .and_then(|v| v.to_unquoted_string_str().ok())
+        .or_else(|| {
+            Version::parse(query.selector)
+                .map(|_| Cow::Borrowed(query.selector.trim_start_matches('v')))
+        });
+    let Some(exact) = exact else {
+        return Ok(None);
+    };
+    let selected = versions
+        .to_member(&exact)?
+        .optional()
+        .with_context(|| format!("version not found: {}", query.selector))?;
+    let mut fields = Vec::new();
+    for (key, entry) in value.to_object()? {
+        let key = key.to_unquoted_string_str()?;
+        if key != "versions"
+            && (query.fields.is_empty() || query.fields.iter().any(|field| field == &key))
+        {
+            fields.push((key.into_owned(), Value::from_raw(entry)?));
+        }
+    }
+    let mut metadata = Value::Object(fields);
+    if query.fields.is_empty() || query.fields.iter().any(|field| field == "versions") {
+        let keys = versions
+            .to_object()?
+            .map(|(key, _)| key.to_unquoted_string_str())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let names = sort_names(keys.iter().map(Cow::as_ref));
+        metadata.set(
+            "versions",
+            Value::Array(names.into_iter().map(Value::from).collect()),
+        );
+    }
+    Ok(Some(checked_package(
+        metadata,
+        vec![Value::from_raw(selected)?],
+    )?))
 }
 
 fn resolve_json(value: &Value, query: Query<'_>) -> Result<Package> {

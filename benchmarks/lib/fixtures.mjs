@@ -79,7 +79,12 @@ export async function createFixture({ live = false } = {}) {
         await writeJson(join(cwd, 'node_modules', name, 'package.json'), manifest);
         packages[`node_modules/${name}`] = { ...manifest, resolved: `https://example.test/${encodeURIComponent(name)}-1.0.0.tgz`, integrity: `sha512-${'A'.repeat(86)}==` };
       }
-      await writeJson(join(cwd, 'package.json'), { name: 'bench-app', version: '1.0.0', private: true, dependencies });
+      await writeJson(join(cwd, 'package.json'), {
+        name: 'bench-app', version: '1.0.0', private: true, dependencies,
+        scripts: { 'bench-shell': 'echo bench-shell' },
+        files: ['bench-entry.mjs'],
+      });
+      await writeFile(join(cwd, 'bench-entry.mjs'), "console.log('bench-js');\n");
       await writeJson(join(cwd, 'package-lock.json'), {
         name: 'bench-app', version: '1.0.0', lockfileVersion: 3, requires: true,
         packages: { '': { name: 'bench-app', version: '1.0.0', dependencies }, ...packages },

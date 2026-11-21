@@ -14,6 +14,7 @@ export function parseTools(value) {
 function json(output) { return JSON.parse(output.trim()); }
 const spec = (args, validate) => ({ args, validate });
 const skip = reason => ({ skipped: true, reason });
+const version = output => assert.match(output, /^\d+\.\d+\.\d+/);
 
 function listing(output, all, asJson) {
   const names = new Set();
@@ -36,12 +37,17 @@ export function buildCases(fixture, target = { name: PACKAGE, version: LATEST, s
     tnpm: spec(args, validate), bun,
   } });
   const cases = fixture.live ? [] : [
+    local('CLI --version', ['--version'], version, spec(['--version'], version)),
     local('ls --json', ['ls', '--json'], output => listing(output, false, true), skip('bun pm ls has no JSON output; compare the text-listing cases instead.')),
     local('ls --all --json', ['ls', '--all', '--json'], output => listing(output, true, true), skip('bun pm ls has no JSON output; compare the text-listing cases instead.')),
     local('ls / text', ['ls'], output => listing(output, false, false), spec(['pm', 'ls'], output => listing(output, false, false))),
     local('ls --all / text', ['ls', '--all'], output => listing(output, true, false), spec(['pm', 'ls', '--all'], output => listing(output, true, false))),
     local('fund --json', ['fund', '--json'], output => assert.equal(json(output).length, 20), skip('No corresponding Bun funding command.')),
     local('version --json (read only)', ['version', '--json'], output => assert.equal(json(output)['bench-app'], '1.0.0'), skip('bun pm version prints the package version and usage, but does not support the JSON version report.')),
+    local('explain / transitive', ['explain', '@bench/leaf-00-0'], explain, spec(['pm', 'why', '@bench/leaf-00-0'], explain)),
+    local('run / shell script', ['run', 'bench-shell'], stdout('bench-shell'), spec(['run', 'bench-shell'], stdout('bench-shell'))),
+    local('run / JS entry', ['run', './bench-entry.mjs'], stdout('bench-js'), spec(['run', './bench-entry.mjs'], stdout('bench-js'))),
+    local('pack / dry run', ['pack', '--dry-run', '--ignore-scripts'], pack, spec(['pm', 'pack', '--dry-run', '--ignore-scripts'], pack)),
     { name: 'get registry', tools: {
       tnpm: spec(['get', 'registry'], output => assert.equal(output.trim(), fixture.registries.tnpm)),
       bun: skip('No corresponding registry-config getter; bun pm pkg get reads package.json instead.'),
@@ -68,4 +74,17 @@ export function buildCases(fixture, target = { name: PACKAGE, version: LATEST, s
     }
   }
   return cases;
+}
+
+function explain(output) {
+  assert.match(output, /@bench\/leaf-00-0@1\.0\.0/);
+  assert.match(output, /@bench\/root-00/);
+}
+
+function stdout(expected) {
+  return output => assert.equal(output.trim(), expected);
+}
+
+function pack(output) {
+  assert.match(output, /bench-app-1\.0\.0\.tgz/);
 }

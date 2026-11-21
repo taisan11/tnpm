@@ -22,7 +22,9 @@ impl Value {
         Ok(Self::from_raw(RawJson::parse(text)?.value())?)
     }
 
-    fn from_raw(value: RawJsonValue<'_, '_>) -> std::result::Result<Self, nojson::JsonParseError> {
+    pub(crate) fn from_raw(
+        value: RawJsonValue<'_, '_>,
+    ) -> std::result::Result<Self, nojson::JsonParseError> {
         Ok(match value.kind() {
             JsonValueKind::Null => Self::Null,
             JsonValueKind::Boolean => Self::Bool(value.try_into()?),
