@@ -11,6 +11,10 @@ use crate::{
     util::style::progress::Progress,
 };
 use anyhow::{Context, Result, bail};
+use futures_util::{
+    FutureExt,
+    future::{LocalBoxFuture, Shared},
+};
 use rustc_hash::FxHashMap;
 use std::{
     borrow::Cow,
@@ -23,6 +27,11 @@ use std::{
 
 mod cache;
 mod http_cache;
+#[cfg(test)]
+#[path = "../../benchmarks/metadata.rs"]
+mod metadata_benchmark;
+#[cfg(test)]
+mod tests;
 pub(crate) mod transport;
 
 const MAX_BODY: usize = 128 * 1024 * 1024;
@@ -33,6 +42,69 @@ thread_local! {
     /// Parsed packuments survive across selectors and resolution waves so one
     /// URL is read/parsed once per command. Entries are bounded by count/size.
     static DOCUMENTS: RefCell<DocumentCache> = RefCell::new(DocumentCache::default());
+    static PENDING: RefCell<VecDeque<PendingDocument>> = const { RefCell::new(VecDeque::new()) };
+}
+
+type PendingResult = Shared<LocalBoxFuture<'static, Option<Rc<Document>>>>;
+
+struct PendingDocument {
+    key: String,
+    bytes: usize,
+    result: PendingResult,
+}
+
+async fn complete_pending(key: &str, result: PendingResult) -> Option<Rc<Document>> {
+    let completed = result.clone();
+    let document = result.await;
+    PENDING.with(|pending| {
+        pending
+            .borrow_mut()
+            .retain(|entry| entry.key != key || !entry.result.ptr_eq(&completed))
+    });
+    if let Some(document) = &document {
+        remember(key, document.clone());
+    }
+    document
+}
+
+pub(crate) async fn finish_pending() {
+    loop {
+        let pending = PENDING.with(|pending| {
+            pending
+                .borrow()
+                .front()
+                .map(|entry| (entry.key.clone(), entry.result.clone()))
+        });
+        let Some((key, result)) = pending else {
+            break;
+        };
+        complete_pending(&key, result).await;
+    }
+}
+
+async fn pending_capacity(bytes: usize) {
+    loop {
+        let pending = PENDING.with(|pending| {
+            let pending = pending.borrow();
+            (pending.len() >= MAX_DOCUMENTS
+                || pending
+                    .iter()
+                    .map(|entry| entry.bytes)
+                    .sum::<usize>()
+                    .saturating_add(bytes)
+                    > MAX_DOCUMENT_BYTES)
+                .then(|| {
+                    pending
+                        .front()
+                        .map(|entry| (entry.key.clone(), entry.result.clone()))
+                })
+                .flatten()
+        });
+        let Some((key, result)) = pending else {
+            break;
+        };
+        complete_pending(&key, result).await;
+    }
 }
 
 #[derive(Default)]
@@ -48,8 +120,9 @@ impl DocumentCache {
     }
 
     fn insert(&mut self, url: String, document: Rc<Document>) {
-        if self.entries.contains_key(&url) {
-            return;
+        if let Some(old) = self.entries.remove(&url) {
+            self.bytes = self.bytes.saturating_sub(old.byte_len());
+            self.order.retain(|key| key != &url);
         }
         let size = document.byte_len();
         if size > MAX_DOCUMENT_BYTES {
@@ -77,6 +150,18 @@ fn remember(key: &str, document: Rc<Document>) {
 }
 
 async fn load_cached(cache: Option<&Cache>, key: &str) -> Result<Option<Rc<Document>>> {
+    let pending = PENDING.with(|pending| {
+        pending
+            .borrow()
+            .iter()
+            .find(|entry| entry.key == key)
+            .map(|entry| entry.result.clone())
+    });
+    if let Some(result) = pending
+        && let Some(document) = complete_pending(key, result).await
+    {
+        return Ok(Some(document));
+    }
     if let Some(document) = DOCUMENTS.with(|documents| documents.borrow().get(key)) {
         return Ok(Some(document));
     }
@@ -350,6 +435,9 @@ pub async fn fetch_using(
         profile.mark("body_ms");
         profile.number("decoded_body_bytes", body.len() as u64);
         let large = body.len() > 64 * 1024;
+        if large && !query.metadata && query.latest_only {
+            return deferred_package(body, &key, cache, policy, query, profile).await;
+        }
         let selector = query.selector.to_owned();
         let fields = query.fields.to_vec();
         let metadata = query.metadata;
@@ -414,6 +502,152 @@ pub async fn fetch_using(
         return Ok(package);
     }
     bail!("registry could not revalidate the metadata cache")
+}
+
+async fn deferred_package(
+    body: Vec<u8>,
+    key: &str,
+    cache: Option<Cache>,
+    policy: Policy,
+    query: Query<'_>,
+    mut profile: Profile,
+) -> Result<Package> {
+    pending_capacity(body.len()).await;
+    let bytes = body.len();
+    let selector = query.selector.to_owned();
+    let cache_key = key.to_owned();
+    let (sender, ready) = tokio::sync::oneshot::channel();
+    let task = tokio::task::spawn_blocking(move || {
+        let selected = (|| -> Result<_> {
+            let text = simdutf8::compat::from_utf8(&body)
+                .context("registry metadata is not valid UTF-8")?;
+            profile.mark("utf8_ms");
+            let (package, raw) = resolve_raw(text, &selector, &mut profile)?;
+            profile.mark("resolve_ms");
+            Ok((raw, package))
+        })();
+        let (raw, package) = match selected {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = sender.send(Err(error));
+                return None;
+            }
+        };
+        let _ = sender.send(Ok((package, profile)));
+        if !policy.can_store() {
+            return None;
+        }
+        let mut profile = Profile::new("registry-cache");
+        let value = match Value::from_raw(raw.value()) {
+            Ok(value) => value,
+            Err(error) => {
+                cache_warning(Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    error,
+                )));
+                return None;
+            }
+        };
+        drop(raw);
+        drop(body);
+        profile.mark("json_tree_ms");
+        let encoded = match cache::encode(&cache_key, &value, &policy)
+            .and_then(|bytes| Document::open(bytes, &cache_key))
+        {
+            Ok(document) => document,
+            Err(error) => {
+                cache_warning(Err(error));
+                None
+            }
+        };
+        profile.mark("index_ms");
+        if let (Some(cache), Some(document)) = (cache, &encoded) {
+            cache_warning(cache.store_bytes(&cache_key, document.as_bytes()));
+        }
+        profile.mark("write_ms");
+        drop(value);
+        profile.mark("json_tree_drop_ms");
+        encoded
+    });
+    let result = async move {
+        match task.await {
+            Ok(document) => document.map(Rc::new),
+            Err(error) => {
+                crate::util::style::progress::message(format_args!(
+                    "tnpm: registry cache task failed: {error}"
+                ));
+                None
+            }
+        }
+    }
+    .boxed_local()
+    .shared();
+    PENDING.with(|pending| {
+        pending.borrow_mut().push_back(PendingDocument {
+            key: key.to_owned(),
+            bytes,
+            result,
+        })
+    });
+    let (package, mut profile) = ready.await.context("registry metadata task failed")??;
+    profile.text("source", "network");
+    Ok(package)
+}
+
+fn resolve_raw<'a>(
+    text: &'a str,
+    selector: &str,
+    profile: &mut Profile,
+) -> Result<(Package, nojson::RawJson<'a>)> {
+    let raw = nojson::RawJson::parse(text).context("could not parse registry metadata")?;
+    profile.mark("json_parse_ms");
+    let root = raw.value();
+    let versions = root
+        .to_member("versions")?
+        .optional()
+        .context("cache has no versions")?;
+    let exact = root
+        .to_member("dist-tags")?
+        .optional()
+        .and_then(|tags| {
+            tags.to_member(selector)
+                .ok()?
+                .optional()?
+                .to_unquoted_string_str()
+                .ok()
+        })
+        .or_else(|| {
+            Version::parse(selector).map(|_| Cow::Borrowed(selector.trim_start_matches('v')))
+        });
+    let selected = if let Some(exact) = exact {
+        versions
+            .to_member(exact.as_ref())?
+            .optional()
+            .with_context(|| format!("version not found: {selector}"))?
+    } else {
+        let range = Range::parse(selector)
+            .with_context(|| format!("unknown tag or unsupported version range: {selector}"))?;
+        let mut best = None::<(Cow<'_, str>, Version, nojson::RawJsonValue<'_, '_>)>;
+        for (name, value) in versions.to_object()? {
+            let name = name.to_unquoted_string_str()?;
+            let version = Version::parse(&name)
+                .with_context(|| format!("unknown tag or unsupported version range: {selector}"))?;
+            if range.matches(&version)
+                && best.as_ref().is_none_or(|(current_name, current, _)| {
+                    version
+                        .compare(current)
+                        .then_with(|| name.cmp(current_name))
+                        == Ordering::Greater
+                })
+            {
+                best = Some((name, version, value));
+            }
+        }
+        best.map(|(_, _, value)| value)
+            .with_context(|| format!("no matching version: {selector}"))?
+    };
+    let package = checked_package(Value::object(), vec![Value::parse(selected.as_raw_str())?])?;
+    Ok((package, raw))
 }
 
 pub struct Package {

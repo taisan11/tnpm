@@ -369,6 +369,109 @@ fn large_metadata_preserves_valid_empty_and_invalid_response_handling() {
 }
 
 #[test]
+fn deferred_metadata_is_complete_on_exit_and_preserves_cache_boundaries() {
+    for mode in ["public", "no-store", "authenticated", "no-cache"] {
+        let f = Fixture::new();
+        f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+        f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+        {
+            let mut routes = f.routes.lock().unwrap();
+            let body = routes.get_mut("/app").unwrap();
+            body.resize(body.len() + 128 * 1024, b' ');
+        }
+        if mode == "no-store" {
+            f.cache_controls
+                .lock()
+                .unwrap()
+                .insert("/app".into(), "no-store".into());
+        }
+        if mode == "authenticated" {
+            f.file(
+                ".npmrc",
+                &format!(
+                    "{}:_authToken=fixture-only\n",
+                    f.url.strip_prefix("http:").unwrap()
+                ),
+            );
+        }
+        let mut args = vec!["install", "--package-lock-only", "--ignore-scripts"];
+        if mode == "no-cache" {
+            args.push("--no-cache");
+        }
+        f.ok(&args);
+        assert_eq!(
+            f.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| *path == "/app")
+                .count(),
+            1
+        );
+        fs::remove_file(f.root.join("tnpm-lock.json")).unwrap();
+        f.file("package.json", r#"{"dependencies":{"app":"2"}}"#);
+        f.requests.lock().unwrap().clear();
+        let output = f.invoke(&[
+            "install",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--offline",
+        ]);
+        assert_eq!(
+            output.status.success(),
+            mode == "public",
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(f.requests.lock().unwrap().is_empty());
+        if mode == "public" {
+            assert!(
+                fs::read_to_string(f.root.join("tnpm-lock.json"))
+                    .unwrap()
+                    .contains("2.0.0")
+            );
+        }
+    }
+}
+
+#[test]
+fn large_metadata_reuses_pending_documents_across_selectors() {
+    let f = Fixture::new();
+    f.single("a", r#", "dependencies":{"shared":"1"}"#);
+    f.single("z", r#", "dependencies":{"shared":"2"}"#);
+    f.releases("shared", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
+    {
+        let mut routes = f.routes.lock().unwrap();
+        let body = routes.get_mut("/shared").unwrap();
+        body.resize(body.len() + 128 * 1024, b' ');
+    }
+    f.file("package.json", r#"{"dependencies":{"a":"1","z":"1"}}"#);
+    f.ok(&["install", "--ignore-scripts"]);
+    assert_eq!(
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| *path == "/shared")
+            .count(),
+        1
+    );
+    assert!(
+        fs::read_to_string(f.root.join("node_modules/shared/package.json"))
+            .unwrap()
+            .contains(r#""version":"1.0.0""#)
+    );
+    assert!(
+        fs::read_to_string(
+            f.root
+                .join("node_modules/z/node_modules/shared/package.json")
+        )
+        .unwrap()
+        .contains(r#""version":"2.0.0""#)
+    );
+}
+
+#[test]
 fn streamed_archives_stay_private_until_the_complete_response_passes_integrity() {
     for outcome in ["valid", "bad-integrity", "disconnect"] {
         let f = Fixture::new();
