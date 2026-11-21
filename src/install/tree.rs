@@ -329,6 +329,9 @@ fn link_bins(
                 None => continue,
             },
         };
+        if bins.is_empty() {
+            continue;
+        }
         let modules = if lockfile::name_at(path).starts_with('@') {
             package.parent().unwrap().parent().unwrap()
         } else {
