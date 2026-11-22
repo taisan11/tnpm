@@ -50,6 +50,7 @@ jobs:
           cache-bin: false
       - uses: mozilla-actions/sccache-action@v0.0.11
       - name: Verify tag and package version
+        if: github.ref_type == 'tag'
         shell: python
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -83,6 +84,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-24.04
     permissions:

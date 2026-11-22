@@ -36,10 +36,7 @@ fn index_key(entry: &Value) -> String {
     }
     let identity =
         lockfile::copy_fields(entry, &["name", "version", "resolved", "integrity", "bin"]);
-    format!(
-        "{:x}",
-        Sha256::digest(canonical(&identity).pretty().as_bytes())
-    )
+    const_hex::encode(Sha256::digest(canonical(&identity).pretty().as_bytes()))
 }
 
 pub(super) async fn try_install(

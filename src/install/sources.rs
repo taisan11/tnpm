@@ -459,10 +459,9 @@ fn git_archive(spec: &str, offline: bool, no_cache: bool) -> Result<(Vec<u8>, St
             }
         }
     }
-    let key = format!(
-        "{:x}",
-        sha2::Sha256::digest(format!("{url}#{reference}").as_bytes())
-    );
+    let key = const_hex::encode(sha2::Sha256::digest(
+        format!("{url}#{reference}").as_bytes(),
+    ));
     let cached = cache.join(format!("{key}.tar"));
     if !no_cache
         && pinned
@@ -544,10 +543,7 @@ fn git_archive(spec: &str, offline: bool, no_cache: bool) -> Result<(Vec<u8>, St
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&cache, fs::Permissions::from_mode(0o700))?;
     }
-    let key = format!(
-        "{:x}",
-        sha2::Sha256::digest(format!("{url}#{commit}").as_bytes())
-    );
+    let key = const_hex::encode(sha2::Sha256::digest(format!("{url}#{commit}").as_bytes()));
     let path = cache.join(format!("{key}.tar"));
     let mut temporary = tempfile::NamedTempFile::new_in(&cache)?;
     use std::io::Write;

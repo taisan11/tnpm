@@ -103,7 +103,7 @@ async fn download_update(
     let bytes = get_limited(client, url, MAX_BINARY)
         .await
         .context("could not download release binary")?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
+    let actual = const_hex::encode(Sha256::digest(&bytes));
     ensure!(
         actual == release.digest,
         "release binary SHA-256 mismatch; current executable was not changed"
@@ -223,7 +223,7 @@ mod tests {
                     let digest = if bad_digest {
                         "0".repeat(64)
                     } else {
-                        format!("{:x}", Sha256::digest(b"new executable"))
+                        const_hex::encode(Sha256::digest(b"new executable"))
                     };
                     format!(r#"{{"tag_name":"v1.2.3","assets":[{{"name":"binary","digest":"sha256:{digest}","browser_download_url":"https://evil.invalid/ignored"}}]}}"#).into_bytes()
                 } else {

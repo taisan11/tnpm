@@ -194,7 +194,7 @@ fn remote_imports_reject_credentials_html_invalid_utf8_and_parse_errors() {
 }
 
 fn cache(f: &Fixture, url: &str, final_url: &str, source: &str) {
-    let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+    let digest = const_hex::encode(Sha256::digest(source.as_bytes()));
     let value = nojson::json(|f| {
         f.object(|f| {
             f.member("requested", url)?;
@@ -205,7 +205,7 @@ fn cache(f: &Fixture, url: &str, final_url: &str, source: &str) {
         })
     })
     .to_string();
-    let key = format!("{:x}", Sha256::digest(url.as_bytes()));
+    let key = const_hex::encode(Sha256::digest(url.as_bytes()));
     f.file(&format!("home/.tnpm/cache/modules-v1/{key}.json"), &value);
 }
 

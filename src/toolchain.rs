@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use std::{env, ffi::OsString, fs, path::Path, process::Command};
 
 #[cfg(tnpm_bundled_tsrs)]
-const TSRS_VERSION: &str = "0.23.0-ts7.1.0-beta";
+const TSRS_VERSION: &str = "7.1.0-beta.tsrs4";
 
 #[cfg(tnpm_bundled_tsrs)]
 const BUNDLE: &[u8] = include_bytes!(env!("TNPM_TSRS_BUNDLE"));

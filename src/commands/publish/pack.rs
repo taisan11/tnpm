@@ -179,7 +179,7 @@ pub(super) fn build(root: &Path, data: &Value, config: &Config) -> Result<Packed
             name.trim_start_matches('@').replace('/', "-")
         ),
         integrity: format!("sha512-{}", STANDARD.encode(Sha512::digest(&bytes))),
-        shasum: format!("{:x}", sha1::Sha1::digest(&bytes)),
+        shasum: const_hex::encode(sha1::Sha1::digest(&bytes)),
         bytes,
         files,
     })

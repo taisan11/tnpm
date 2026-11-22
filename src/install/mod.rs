@@ -63,7 +63,10 @@ async fn runtime_package_inner(
     let root = dirs::home_dir()
         .context("home directory not found")?
         .join(".tnpm/exec")
-        .join(format!("runner-{:x}", Sha256::digest(key.as_bytes())));
+        .join(format!(
+            "runner-{}",
+            const_hex::encode(Sha256::digest(key.as_bytes()))
+        ));
     fs::create_dir_all(&root)?;
     let mut isolated = options.clone();
     isolated.command = "runner-import".into();
@@ -620,7 +623,7 @@ async fn exec(ctx: &Context<'_>, root: &Path) -> Result<()> {
     let cache_root = dirs::home_dir()
         .context("home directory not found")?
         .join(".tnpm/exec")
-        .join(format!("{:x}", Sha256::digest(key.as_bytes())));
+        .join(const_hex::encode(Sha256::digest(key.as_bytes())));
     fs::create_dir_all(&cache_root)?;
     let mut manifest = Value::object();
     manifest.set("name", Value::from("tnpm-exec"));
