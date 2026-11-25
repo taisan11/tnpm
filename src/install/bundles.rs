@@ -36,7 +36,7 @@ pub(super) async fn hydrate(ctx: &Context<'_>, mut data: Value) -> Result<Value>
             .await
             .context("bundled package clone task failed")??;
     } else if !sources::prepare(ctx, &entry, &directory).await? {
-        let bytes = store::tarball(ctx, &entry, name).await?;
+        let bytes = store::tarball(ctx, &entry).await?;
         fs::create_dir(&directory)?;
         let destination = directory.clone();
         tokio::task::spawn_blocking(move || store::unpack(&bytes, &destination))
@@ -216,7 +216,7 @@ pub(super) async fn prepare(ctx: &Context<'_>, entry: &Value, destination: &Path
     let mut archive_entry = entry.clone();
     archive_entry.remove("tnpmBundlePath");
     if !sources::prepare(ctx, &archive_entry, &parent).await? {
-        let bytes = store::tarball(ctx, entry, entry.str("name").unwrap_or("bundle")).await?;
+        let bytes = store::tarball(ctx, entry).await?;
         fs::create_dir(&parent)?;
         store::unpack(&bytes, &parent)?;
     }

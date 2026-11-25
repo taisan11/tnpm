@@ -35,6 +35,48 @@ fn isolated_update_prints_only_the_update_json_report() {
 }
 
 #[test]
+fn update_json_distinguishes_versionless_workspace_additions_and_removals() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"workspaces":["packages/*"]}"#);
+    f.file("packages/local/package.json", r#"{"name":"local"}"#);
+    for kind in ["added", "removed"] {
+        let output = f.ok(&[
+            "update",
+            "--json",
+            "--node-linker=isolated",
+            "--ignore-scripts",
+        ]);
+        let json = nojson::RawJson::parse(&output).unwrap();
+        let mut changes = json
+            .value()
+            .to_member("changes")
+            .unwrap()
+            .required()
+            .unwrap()
+            .to_array()
+            .unwrap();
+        let change = changes.next().unwrap();
+        assert!(changes.next().is_none(), "{output}");
+        let actual: &str = change
+            .to_member("kind")
+            .unwrap()
+            .required()
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(actual, kind, "{output}");
+        for expected in [
+            "\"from\": null",
+            "\"to\": null",
+            "\"location\": \"node_modules/local\"",
+        ] {
+            assert!(output.contains(expected), "{output}");
+        }
+        f.file("package.json", "{}");
+    }
+}
+
+#[test]
 fn update_reports_before_after_versions_noop_and_single_json_document() {
     let f = Fixture::new();
     f.single("app", "");
@@ -46,17 +88,7 @@ fn update_reports_before_after_versions_noop_and_single_json_document() {
         &[("1.0.0", ""), ("1.1.0", ""), ("2.0.0", "")],
     );
     let output = f.ok(&["update", "--no-cache", "--ignore-scripts"]);
-    for expected in [
-        "Package",
-        "Before",
-        "After",
-        "app",
-        "1.0.0",
-        "1.1.0",
-        "Updated 1 package.",
-    ] {
-        assert!(output.contains(expected), "{output}");
-    }
+    assert_eq!(output, "~ app 1.0.0 -> 1.1.0\n\nupdated 1 package\n");
     assert!(
         !output.contains("2.0.0"),
         "regular update must respect ^1: {output}"
@@ -75,6 +107,7 @@ fn update_reports_before_after_versions_noop_and_single_json_document() {
     nojson::RawJson::parse(&output).unwrap();
     for expected in [
         "\"updated\": 1",
+        "\"kind\": \"updated\"",
         "\"from\": \"1.1.0\"",
         "\"to\": \"2.0.0\"",
         "\"mode\": \"installed\"",
@@ -92,6 +125,10 @@ fn update_lock_only_reports_resolution_changes_without_claiming_installation() {
     f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
     f.file("package.json", r#"{"dependencies":{"app":"1.0.0"}}"#);
     f.ok(&["install", "--package-lock-only"]);
+    assert_eq!(
+        f.ok(&["update", "--latest", "--package-lock-only", "--no-save",]),
+        "~ app 1.0.0 -> 2.0.0\n\nPlanned changes (not saved): updated 1 package\n"
+    );
     let output = f.ok(&[
         "update",
         "--latest",

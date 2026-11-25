@@ -5,6 +5,7 @@ use crate::{
     json::Value,
     lockfile::{self, Lockfile},
     manifest, scripts,
+    util::style::progress::{self, Phase},
 };
 use anyhow::{Context as _, Result, bail, ensure};
 use futures_util::{StreamExt, stream};
@@ -87,6 +88,8 @@ pub(super) async fn try_install(
         .tempdir_in(root)?;
     let mut prepared = Vec::new();
     let paths: Vec<_> = selected.iter().cloned().collect();
+    ctx.progress
+        .start_many(Phase::Preparing, paths.iter().map(String::as_str));
     let stage_path = stage.path();
     let trust = &trust;
     let mut jobs = stream::iter(paths.iter().enumerate().map(|(n, path)| async move {
@@ -122,8 +125,6 @@ pub(super) async fn try_install(
             if let Some(index) = &old
                 && hardlinks::restore(index, store, &destination)?
             {
-                ctx.progress
-                    .event("prepare", &format!("hardlink indexed package {path}"));
                 return Ok(Some(destination));
             }
             let payload = stage_path.join(format!("payload-{n}"));
@@ -163,13 +164,15 @@ pub(super) async fn try_install(
     }))
     .buffer_unordered(CONCURRENCY);
     while let Some((path, result)) = jobs.next().await {
+        ctx.progress.complete(Phase::Preparing, path);
         let entry = &lock.packages[path];
         match result {
             Ok(Some(destination)) => prepared.push((path.clone(), destination)),
             Ok(None) => return Ok(false),
             Err(error) if flag(entry, "optional") => {
-                ctx.progress
-                    .event("prepare", &format!("skipped optional {path}: {error:#}"));
+                progress::single_line_message(format_args!(
+                    "tnpm: skipped optional {path}: {error:#}"
+                ));
                 selected.remove(path);
             }
             Err(error) => return Err(error).with_context(|| format!("could not prepare {path}")),
@@ -181,6 +184,13 @@ pub(super) async fn try_install(
     super::tree::remove_path(&root.join("node_modules"))?;
     fs::create_dir_all(root.join("node_modules/.tnpm"))?;
     fs::write(root.join(MARKER), "isolated\n")?;
+    ctx.progress.start_many(
+        Phase::Linking,
+        prepared
+            .iter()
+            .filter(|(path, _)| selected.contains(path))
+            .map(|(path, _)| path.as_str()),
+    );
     for (path, source) in prepared {
         if !selected.contains(&path) {
             continue;
@@ -188,6 +198,7 @@ pub(super) async fn try_install(
         let destination = package_path(root, &path);
         fs::create_dir_all(destination.parent().unwrap())?;
         fs::rename(source, destination)?;
+        ctx.progress.complete(Phase::Linking, &path);
     }
     finish_links(ctx, root, manifest, lock, selected)?;
     let mut hidden = lock.clone();
@@ -195,7 +206,7 @@ pub(super) async fn try_install(
     let mut hidden_value = hidden.value(manifest, true);
     hidden_value.set("tnpmBuilds", Value::object());
     crate::fs::write_json(&root.join("node_modules/.tnpm-lock.json"), &hidden_value)?;
-    if ctx.options.command != "update" {
+    if super::materialize_summary(ctx.options) {
         super::summary(ctx.options, "installed", selected.len());
     }
     Ok(true)
@@ -222,7 +233,7 @@ async fn prepare_payload(
         }
         super::tree::remove_path(destination)?;
     }
-    let bytes = store::tarball(ctx, entry, lockfile::name_at(path)).await?;
+    let bytes = store::tarball(ctx, entry).await?;
     fs::create_dir(destination)?;
     let dest = destination.to_owned();
     let clones = ctx.clones.clone();

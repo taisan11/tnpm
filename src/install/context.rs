@@ -1,8 +1,11 @@
 //! Per-command configuration, HTTP clients, and metadata memoization.
 use super::flag;
 use crate::{
-    cli::Options, config::Config, json::Value, lockfile, registry, scripts, spec,
-    util::style::progress::Progress,
+    cli::Options,
+    config::Config,
+    json::Value,
+    lockfile, registry, scripts, spec,
+    util::style::progress::{Phase, Progress},
 };
 use anyhow::{Context as _, Result, bail};
 use rustc_hash::FxHashMap;
@@ -87,21 +90,13 @@ impl<'a> Context<'a> {
             return Ok(());
         }
         let label = format!("{} ({event})", root.display());
-        self.progress.start("scripts", &label);
+        self.progress.start(Phase::RunningScripts, &label);
         let result = if native {
             scripts::native_build(root, manifest, self.options.json)
         } else {
             scripts::lifecycle_output(root, manifest, event, self.options.json)
         };
-        self.progress.finish(
-            "scripts",
-            &label,
-            if result.is_ok() {
-                "completed"
-            } else {
-                "failed"
-            },
-        );
+        self.progress.complete(Phase::RunningScripts, &label);
         result
     }
     pub(super) fn client(&self, url: &reqwest::Url, tarball: bool) -> Result<reqwest::Client> {
@@ -168,14 +163,12 @@ impl<'a> Context<'a> {
         };
         let authorization = self.config.authorization(&url)?;
         let label = format!("{name}@{spec}");
-        self.progress.start("resolve", &label);
+        self.progress.start(Phase::Resolving, &label);
         let result = async {
             if self.offline() {
                 if self.config.authenticated(&url) {
                     bail!("ENOTCACHED: authenticated registry metadata is not cached");
                 }
-                self.progress
-                    .event("resolve", &format!("offline metadata cache {label}"));
                 registry::fetch_offline(&url, registry::Query::versions(spec, latest_only))
             } else {
                 registry::fetch_using(
@@ -184,17 +177,12 @@ impl<'a> Context<'a> {
                     registry::Query::versions(spec, latest_only),
                     self.options.no_cache || self.config.authenticated(&url),
                     || self.client(&url, false),
-                    Some((&self.progress, name)),
                 )
                 .await
             }
         }
         .await;
-        self.progress.finish(
-            "resolve",
-            &label,
-            if result.is_ok() { "resolved" } else { "failed" },
-        );
+        self.progress.complete(Phase::Resolving, &label);
         let package = result?;
         let mut hydrated = Vec::with_capacity(package.versions.len());
         for data in package.versions {

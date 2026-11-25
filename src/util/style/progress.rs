@@ -44,7 +44,7 @@ impl Renderer {
     fn finish(&mut self, output: &mut impl Write) -> io::Result<()> {
         if self.active {
             self.active = false;
-            writeln!(output)?;
+            write!(output, "\r\x1b[2K")?;
             output.flush()?;
         }
         Ok(())
@@ -112,13 +112,10 @@ fn terminal_columns() -> Option<usize> {
     None
 }
 
-/// Complete the active progress row before stdout, child output or fatal errors.
-/// Returns whether a live terminal row was completed.
-pub fn finish() -> bool {
+/// Clear the active progress row before stdout, child output or fatal errors.
+pub fn finish() {
     let mut renderer = RENDERER.lock().unwrap_or_else(|e| e.into_inner());
-    let active = renderer.active;
     let _ = renderer.finish(&mut io::stderr().lock());
-    active
 }
 
 /// Keep warnings visible and serialize them with progress from worker threads.
@@ -133,19 +130,57 @@ pub fn message(message: fmt::Arguments<'_>) {
     let _ = renderer.message(&mut io::stderr().lock(), format_args!("{text}"));
 }
 
+pub fn single_line_message(message_args: fmt::Arguments<'_>) {
+    let text = escape_controls(&message_args.to_string());
+    message(format_args!("{text}"));
+}
+
+pub(crate) fn escape_controls(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            escaped.extend(c.escape_default());
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
 pub fn active() -> bool {
     RENDERER.lock().unwrap_or_else(|e| e.into_inner()).active
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Phase {
+    Resolving,
+    Preparing,
+    Linking,
+    Removing,
+    RunningScripts,
+}
+
+impl Phase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Resolving => "Resolving",
+            Self::Preparing => "Preparing",
+            Self::Linking => "Linking",
+            Self::Removing => "Removing",
+            Self::RunningScripts => "Running scripts",
+        }
+    }
+}
+
 #[derive(Default)]
-struct Phase {
+struct Counts {
     discovered: BTreeSet<String>,
     finished: BTreeSet<String>,
 }
 
 pub struct Progress {
     enabled: bool,
-    phases: RefCell<BTreeMap<&'static str, Phase>>,
+    phases: RefCell<BTreeMap<Phase, Counts>>,
 }
 
 impl Progress {
@@ -156,23 +191,26 @@ impl Progress {
         }
     }
 
-    pub fn start(&self, phase: &'static str, package: &str) {
+    pub fn start(&self, phase: Phase, package: &str) {
+        self.start_many(phase, std::iter::once(package));
+    }
+
+    pub fn start_many<'a>(&self, phase: Phase, packages: impl Iterator<Item = &'a str>) {
         if !self.enabled {
             return;
         }
-        let inserted = self
-            .phases
-            .borrow_mut()
-            .entry(phase)
-            .or_default()
-            .discovered
-            .insert(package.into());
-        if inserted {
-            self.event(phase, &format!("checking {package}"));
+        let mut phases = self.phases.borrow_mut();
+        let discovered = &mut phases.entry(phase).or_default().discovered;
+        let previous = discovered.len();
+        discovered.extend(packages.map(str::to_owned));
+        let changed = previous != discovered.len();
+        drop(phases);
+        if changed {
+            self.show(phase);
         }
     }
 
-    pub fn finish(&self, phase: &'static str, package: &str, outcome: &str) {
+    pub fn complete(&self, phase: Phase, package: &str) {
         if !self.enabled {
             return;
         }
@@ -182,29 +220,25 @@ impl Progress {
         let inserted = state.finished.insert(package.into());
         drop(phases);
         if inserted {
-            self.event(phase, &format!("{outcome} {package}"));
+            self.show(phase);
         }
     }
 
-    pub fn event(&self, phase: &'static str, detail: &str) {
+    pub fn show(&self, phase: Phase) {
         if !self.enabled {
             return;
         }
         let phases = self.phases.borrow();
         let (done, total) = phases
-            .get(phase)
+            .get(&phase)
             .map(|p| (p.finished.len(), p.discovered.len()))
             .unwrap_or_default();
-        // Never allow package/registry data to inject terminal escape sequences.
-        let mut clean = String::new();
-        for c in detail.chars() {
-            if c.is_control() {
-                clean.extend(c.escape_default());
-            } else {
-                clean.push(c);
-            }
-        }
-        let line = format!("tnpm: [{done}/{total}] {phase}: {clean}");
+        let label = phase.label();
+        let line = if total == 0 {
+            label.to_owned()
+        } else {
+            format!("{label} [{done}/{total}]")
+        };
         let columns = interactive_columns();
         let mut renderer = RENDERER.lock().unwrap_or_else(|e| e.into_inner());
         let _ = renderer.render(&mut io::stderr().lock(), &line, columns);
@@ -224,15 +258,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn single_line_diagnostics_escape_controls_and_preserve_unicode() {
+        assert_eq!(
+            escape_controls("archive\u{1b}\n\r\u{9b}日本語"),
+            r"archive\u{1b}\n\r\u{9b}日本語"
+        );
+    }
+
+    #[test]
     fn counters_are_deduplicated_and_allow_discovery_after_completion() {
         let p = Progress::new(true);
-        p.start("resolve", "a");
-        p.finish("resolve", "a", "resolved");
-        p.start("resolve", "b");
-        p.finish("resolve", "a", "resolved");
+        p.start(Phase::Resolving, "a");
+        p.complete(Phase::Resolving, "a");
+        p.start(Phase::Resolving, "b");
+        p.complete(Phase::Resolving, "a");
         let phases = p.phases.borrow();
-        assert_eq!(phases["resolve"].discovered.len(), 2);
-        assert_eq!(phases["resolve"].finished.len(), 1);
+        assert_eq!(phases[&Phase::Resolving].discovered.len(), 2);
+        assert_eq!(phases[&Phase::Resolving].finished.len(), 1);
     }
 
     #[test]
@@ -257,7 +299,7 @@ mod tests {
         renderer.finish(&mut output).unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "\r\x1b[2Klong progress frame\r\x1b[2Kshort\nwarning: keep me\n\r\x1b[2Kfinal progress\n"
+            "\r\x1b[2Klong progress frame\r\x1b[2Kshort\r\x1b[2Kwarning: keep me\n\r\x1b[2Kfinal progress\r\x1b[2K"
         );
     }
 

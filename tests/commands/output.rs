@@ -4,6 +4,74 @@ use crate::support;
 use crate::support::Fixture;
 
 #[test]
+fn package_commands_list_actual_changes_in_both_layouts() {
+    for linker in ["--node-linker=hoisted", "--node-linker=isolated"] {
+        let f = Fixture::new();
+        f.single("app", r#", "dependencies":{"leaf":"1"}"#);
+        f.single("leaf", "");
+        f.single("extra", "");
+        f.file("package.json", r#"{"dependencies":{"app":"^1.0.0"}}"#);
+        let run = |command, args: &[&str]| {
+            let mut all = vec![command, linker, "--ignore-scripts", "--no-save"];
+            all.extend_from_slice(args);
+            f.ok(&all)
+        };
+        assert_eq!(
+            run("install", &[]),
+            "+ app@1.0.0\n+ leaf@1.0.0\n\ninstalled 2 packages\n"
+        );
+        assert_eq!(run("install", &[]), "No package changes.\n");
+        f.releases(
+            "app",
+            "1.1.0",
+            &[("1.0.0", r#", "dependencies":{"leaf":"1"}"#), ("1.1.0", "")],
+        );
+        assert_eq!(
+            run("add", &["extra", "--no-cache"]),
+            "~ app 1.0.0 -> 1.1.0\n+ extra@1.0.0\n- leaf@1.0.0\n\ninstalled 1 package, updated 1 package, removed 1 package\n"
+        );
+        assert_eq!(
+            run("remove", &["app"]),
+            "- app@1.1.0\n- extra@1.0.0\n\nremoved 2 packages\n"
+        );
+        assert_eq!(run("uninstall", &["app"]), "No package changes.\n");
+    }
+}
+
+#[test]
+fn package_results_escape_control_characters_in_versions() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file(
+        "node_modules/app/package.json",
+        r#"{"name":"app","version":"1.0.0\u001b\n"}"#,
+    );
+    assert_eq!(
+        f.ok(&["remove", "app", "--ignore-scripts"]),
+        "- app@1.0.0\\u{1b}\\n\n\nremoved 1 package\n"
+    );
+}
+
+#[test]
+fn package_results_include_versionless_workspace_links() {
+    for linker in ["--node-linker=hoisted", "--node-linker=isolated"] {
+        let f = Fixture::new();
+        f.file("package.json", r#"{"workspaces":["packages/*"]}"#);
+        f.file("packages/local/package.json", r#"{"name":"local"}"#);
+        let install = ["install", linker, "--ignore-scripts"];
+        assert_eq!(f.ok(&install), "+ local\n\ninstalled 1 package\n");
+        assert!(f.root.join("node_modules/local/package.json").is_file());
+        assert_eq!(f.ok(&install), "No package changes.\n");
+        if linker == "--node-linker=isolated" {
+            f.file("package.json", "{}");
+            assert_eq!(f.ok(&install), "- local\n\nremoved 1 package\n");
+            assert!(!f.root.join("node_modules/local").exists());
+            assert!(f.root.join("packages/local/package.json").is_file());
+        }
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn run_supports_separator_before_script_and_exposes_original_lifecycle_script() {
     let f = Fixture::new();
@@ -59,7 +127,7 @@ fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
         support::strip_ansi(&String::from_utf8(output.stderr).unwrap()).replace("\r\n", "\n");
     assert_eq!(
         error.matches('\n').count(),
-        2,
+        1,
         "quiet hooks must reuse the progress row: {error:?}"
     );
     assert!(!error.contains("\n\n"), "{error:?}");
@@ -70,11 +138,15 @@ fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
     let error =
         support::strip_ansi(&String::from_utf8(output.stderr).unwrap()).replace("\r\n", "\n");
     assert!(
-        error.lines().any(|line| line == "complete-line-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("complete-line-marker")),
         "{error:?}"
     );
     assert!(
-        error.lines().any(|line| line == "partial-line-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("partial-line-marker")),
         "{error:?}"
     );
     assert!(!error.contains("\n\n"), "{error:?}");
@@ -120,7 +192,7 @@ fn every_command_finishes_with_build_version_on_stderr_and_preserves_exit_codes(
 }
 
 #[test]
-fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
+fn install_logs_short_phase_counters_on_stderr() {
     use std::collections::BTreeMap;
     let f = Fixture::new();
     f.single("app", r#", "dependencies":{"child":"1"}"#);
@@ -136,43 +208,45 @@ fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(!error.contains('\r'));
     assert!(!error.contains('\x1b'));
-    for expected in [
-        "HTTP GET metadata app",
-        "HTTP GET metadata child",
-        "HTTP GET tarball app",
-        "HTTP GET tarball child",
-        "extract node_modules/app",
-        "place:",
-        "node_modules/child",
-    ] {
-        assert!(error.contains(expected), "{error}");
-    }
     assert!(!error.contains("http://"), "{error}");
     assert!(!error.contains("https://"), "{error}");
+    assert!(!error.contains("HTTP GET"), "{error}");
+    assert!(!error.contains("node_modules"), "{error}");
     let mut phases = BTreeMap::new();
     for line in error.lines() {
-        let Some(rest) = line.strip_prefix("tnpm: [") else {
+        if matches!(line, "Resolving" | "Preparing") || line.starts_with("tnpm v") {
             continue;
-        };
-        let (counts, detail) = rest.split_once("] ").unwrap();
+        }
+        let (phase, counts) = line.split_once(" [").unwrap();
+        let counts = counts.strip_suffix(']').unwrap();
         let (done, total) = counts.split_once('/').unwrap();
         let (done, total) = (
             done.parse::<usize>().unwrap(),
             total.parse::<usize>().unwrap(),
         );
         assert!(done <= total);
-        let (phase, _) = detail.split_once(": ").unwrap();
-        let previous = phases.insert(phase, (done, total)).unwrap_or_default();
-        assert!(previous.0 <= done && previous.1 <= total, "{line}");
+        assert!(
+            matches!(phase, "Resolving" | "Preparing" | "Linking"),
+            "{line}"
+        );
+        if let Some(previous) = phases.insert(phase, (done, total)) {
+            assert!(previous.0 <= done && previous.1 <= total, "{line}");
+            assert_ne!(previous, (done, total), "{line}");
+        }
     }
-    assert_eq!(phases["resolve"], (2, 2));
-    assert_eq!(phases["prepare"], (2, 2));
-    assert_eq!(phases["place"], (2, 2));
+    assert_eq!(phases["Resolving"], (2, 2));
+    assert_eq!(phases["Preparing"], (2, 2));
+    assert_eq!(phases["Linking"], (2, 2));
+    assert!(error.contains("Preparing [0/2]\n"), "{error}");
+    assert!(error.contains("Linking [0/2]\n"), "{error}");
     let output = f.invoke(&["install", "--ignore-scripts"]);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no packages need placement"));
+    assert!(output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(error.lines().count(), 2, "{error}");
+    assert_eq!(error.lines().next(), Some("Resolving"), "{error}");
     let output = f.invoke(&["ci", "--ignore-scripts"]);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("clone package cache"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Preparing [2/2]"));
 }
 
 #[test]
@@ -189,17 +263,23 @@ fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer(
     assert!(output.status.success(), "{error}");
     nojson::RawJson::parse(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert!(error.contains("\r\x1b[2K"), "{error:?}");
+    assert!(error.contains("Resolving ["), "{error:?}");
     let error = support::strip_ansi(&error);
     let warning = error
         .find("tnpm: warning: overriding peer dependency")
         .unwrap();
-    assert!(error[..warning].ends_with('\n'), "{error:?}");
+    assert!(error[..warning].ends_with('\r'), "{error:?}");
     assert!(
-        error.lines().any(|line| line == "terminal-script-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("terminal-script-marker")),
         "{error:?}"
     );
     assert_eq!(
-        error.lines().last(),
+        error
+            .lines()
+            .last()
+            .and_then(|line| line.rsplit('\r').next()),
         Some(
             format!(
                 "tnpm v{}({})",
@@ -213,6 +293,23 @@ fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer(
 
 #[test]
 #[cfg(unix)]
+fn terminal_progress_is_cleared_before_an_install_error() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"scripts":{"preinstall":"exit 7"}}"#);
+    let output = f.invoke_tty(&["install", "--json"], "xterm-256color");
+    assert_eq!(output.status.code(), Some(7));
+    let error = String::from_utf8(output.stderr).unwrap();
+    let (progress, diagnostic) = error.rsplit_once("\r\x1b[2K").unwrap();
+    assert!(progress.contains("Running scripts ["), "{error:?}");
+    assert!(!progress.contains('\n'), "{error:?}");
+    assert!(
+        support::strip_ansi(diagnostic).starts_with("tnpm: preinstall script failed"),
+        "{error:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn dumb_terminals_keep_plain_progress_logs() {
     let f = Fixture::new();
     f.file("package.json", "{}");
@@ -220,7 +317,7 @@ fn dumb_terminals_keep_plain_progress_logs() {
     assert!(output.status.success());
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(!error.contains('\x1b'));
-    assert!(error.contains("tnpm: [0/0] resolve:"));
+    assert_eq!(error.lines().next(), Some("Resolving"), "{error}");
 }
 
 #[test]
@@ -242,7 +339,7 @@ fn install_and_update_json_keep_lifecycle_output_on_stderr() {
         nojson::RawJson::parse(&stdout).unwrap();
         assert!(!stdout.contains("marker"));
         let error = String::from_utf8(output.stderr).unwrap();
-        assert!(error.contains("scripts:"));
+        assert!(error.contains("Running scripts ["));
         assert!(error.contains("root-preinstall-marker"));
         assert!(error.contains("root-postinstall-marker"));
         if command == "install" {

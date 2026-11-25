@@ -94,7 +94,6 @@ pub async fn run(root: &Path, options: &Options, config: &Config) -> Result<()> 
         ),
         no_cache,
         || config.http_client(&url, false),
-        None,
     )
     .await?;
     profile.mark("registry_ms");

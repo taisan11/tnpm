@@ -569,7 +569,7 @@ pub(super) fn publish_package_cache(
     }
 }
 
-pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Result<Vec<u8>> {
+pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value) -> Result<Vec<u8>> {
     let resolved = entry
         .str("resolved")
         .context("lockfile package has no resolved tarball URL")?;
@@ -601,7 +601,7 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
             return Ok(bytes);
         }
     }
-    let response = tarball_response(ctx, &url, name).await?;
+    let response = tarball_response(ctx, &url).await?;
     let bytes = response.bytes().await?.to_vec();
     verify(&bytes, integrity)?;
     if entry
@@ -613,11 +613,7 @@ pub(super) async fn tarball(ctx: &Context<'_>, entry: &Value, name: &str) -> Res
     Ok(bytes)
 }
 
-async fn tarball_response(
-    ctx: &Context<'_>,
-    url: &reqwest::Url,
-    name: &str,
-) -> Result<reqwest::Response> {
+async fn tarball_response(ctx: &Context<'_>, url: &reqwest::Url) -> Result<reqwest::Response> {
     let authorization = ctx.config.authorization(url)?;
     if ctx.offline() {
         bail!("ENOTCACHED: tarball {url}");
@@ -632,8 +628,6 @@ async fn tarball_response(
     if let Some(authorization) = authorization {
         request = request.header(reqwest::header::AUTHORIZATION, authorization);
     }
-    ctx.progress
-        .event("prepare", &format!("HTTP GET tarball {name}"));
     let response = request.send().await?.error_for_status()?;
     if response.status() != reqwest::StatusCode::OK {
         bail!("unexpected tarball HTTP status: {}", response.status());
@@ -661,14 +655,12 @@ pub(super) async fn prefetch_package(
             && url.password().is_none(),
         "only HTTP(S) tarballs without URL credentials are supported"
     );
-    let mut response = tarball_response(ctx, &url, name).await?;
+    let mut response = tarball_response(ctx, &url).await?;
     let (sender, receiver) = tokio::sync::mpsc::channel(8);
     let parent = cache
         .parent()
         .context("package cache path has no parent")?
         .to_owned();
-    ctx.progress
-        .event("prepare", &format!("extract node_modules/{name}"));
     let extracted = tokio::task::spawn_blocking(move || -> Result<tempfile::TempDir> {
         fs::create_dir_all(&parent)?;
         let temporary = tempfile::Builder::new()

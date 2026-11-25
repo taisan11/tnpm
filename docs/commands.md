@@ -69,7 +69,7 @@ tnpm cache rm                     # tnpm の全キャッシュを削除
 
 - 共通オプション: `--json`、`--prefix PATH`、`--registry URL`、`--userconfig PATH`、`--globalconfig PATH`、`--help`。通信コマンドには `--no-cache`。
 - 認証系 `login` / `adduser` / `logout` / `whoami`、公開系 `pack` / `publish` / `dist-tag` のオプション・ファイル選択・制限は [認証と公開](publishing.md) を参照してください。
-- 出力: `update` は更新前後のバージョン表を表示します。更新不要なら `No packages were updated.`、`outdated` で対象がなければ `All dependencies are up to date.`。通信・キャッシュ・展開・配置は `[処理済み/確認済み]` の進捗を stderr の同じ1行で更新します（リダイレクト時は追記）。警告や結果表示は上書きしません。成功・失敗・ヘルプを問わず最後に `tnpm vX.X.X(ビルド時コミットハッシュ)` を stderr に出します（JSON の stdout は汚しません）。[出力形式と進捗](cli-output.md)。
+- 出力: `install`・`update`・`uninstall` は変更されたパッケージを `+`・`~`・`-` で表示します。更新不要なら `No packages were updated.`、`outdated` で対象がなければ `All dependencies are up to date.`。通信・キャッシュ・展開・配置は `[処理済み/確認済み]` の進捗を stderr の同じ1行で更新します（リダイレクト時は追記）。警告や結果表示は上書きしません。成功・失敗・ヘルプを問わず最後に `tnpm vX.X.X(ビルド時コミットハッシュ)` を stderr に出します（JSON の stdout は汚しません）。[出力形式と進捗](cli-output.md)。
 - 通常の `update` は宣言された SemVer 範囲内で更新します。`^1.2.3` なら major を越えませんが、`*` / `>=1` / OR 条件など、宣言自体が複数 major を許す場合は越えることがあります。`--latest` はこの範囲を越えて `latest` タグへ更新します。
 - `install` / `i` / `add`: レジストリ依存を解決し、巻き上げ・競合時のネスト・スコープ付きパッケージ・循環参照に対応した `node_modules` を作成。`tnpm-lock.json` を使用し、npm の `package-lock.json` は読み書きしません。`--no-save` では生成しません。互換な lockfile があれば再解決せず利用します。`-D` / `-O` / `-E` / `--no-save` / `--package-lock-only` / `--omit=dev,optional` / `--production` / `--ignore-scripts` に対応。
 - `ci`: lockfile と manifest・依存の整合性を検証後、`node_modules` を削除・再構築。既存 lockfile と `package.json` は書き換えません。`tnpm-lock.json` が必要です。
