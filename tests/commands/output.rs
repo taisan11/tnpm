@@ -59,7 +59,7 @@ fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
         support::strip_ansi(&String::from_utf8(output.stderr).unwrap()).replace("\r\n", "\n");
     assert_eq!(
         error.matches('\n').count(),
-        2,
+        1,
         "quiet hooks must reuse the progress row: {error:?}"
     );
     assert!(!error.contains("\n\n"), "{error:?}");
@@ -70,11 +70,15 @@ fn quiet_and_printing_lifecycle_scripts_do_not_add_blank_terminal_lines() {
     let error =
         support::strip_ansi(&String::from_utf8(output.stderr).unwrap()).replace("\r\n", "\n");
     assert!(
-        error.lines().any(|line| line == "complete-line-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("complete-line-marker")),
         "{error:?}"
     );
     assert!(
-        error.lines().any(|line| line == "partial-line-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("partial-line-marker")),
         "{error:?}"
     );
     assert!(!error.contains("\n\n"), "{error:?}");
@@ -193,13 +197,18 @@ fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer(
     let warning = error
         .find("tnpm: warning: overriding peer dependency")
         .unwrap();
-    assert!(error[..warning].ends_with('\n'), "{error:?}");
+    assert!(error[..warning].ends_with('\r'), "{error:?}");
     assert!(
-        error.lines().any(|line| line == "terminal-script-marker"),
+        error
+            .lines()
+            .any(|line| line.rsplit('\r').next() == Some("terminal-script-marker")),
         "{error:?}"
     );
     assert_eq!(
-        error.lines().last(),
+        error
+            .lines()
+            .last()
+            .and_then(|line| line.rsplit('\r').next()),
         Some(
             format!(
                 "tnpm v{}({})",
@@ -208,6 +217,23 @@ fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer(
             )
             .as_str()
         )
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn terminal_progress_is_cleared_before_an_install_error() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"scripts":{"preinstall":"exit 7"}}"#);
+    let output = f.invoke_tty(&["install", "--json"], "xterm-256color");
+    assert_eq!(output.status.code(), Some(7));
+    let error = String::from_utf8(output.stderr).unwrap();
+    let (progress, diagnostic) = error.rsplit_once("\r\x1b[2K").unwrap();
+    assert!(progress.contains("scripts: "), "{error:?}");
+    assert!(!progress.contains('\n'), "{error:?}");
+    assert!(
+        support::strip_ansi(diagnostic).starts_with("tnpm: preinstall script failed"),
+        "{error:?}"
     );
 }
 

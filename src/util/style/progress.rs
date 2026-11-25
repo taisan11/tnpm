@@ -44,7 +44,7 @@ impl Renderer {
     fn finish(&mut self, output: &mut impl Write) -> io::Result<()> {
         if self.active {
             self.active = false;
-            writeln!(output)?;
+            write!(output, "\r\x1b[2K")?;
             output.flush()?;
         }
         Ok(())
@@ -112,13 +112,10 @@ fn terminal_columns() -> Option<usize> {
     None
 }
 
-/// Complete the active progress row before stdout, child output or fatal errors.
-/// Returns whether a live terminal row was completed.
-pub fn finish() -> bool {
+/// Clear the active progress row before stdout, child output or fatal errors.
+pub fn finish() {
     let mut renderer = RENDERER.lock().unwrap_or_else(|e| e.into_inner());
-    let active = renderer.active;
     let _ = renderer.finish(&mut io::stderr().lock());
-    active
 }
 
 /// Keep warnings visible and serialize them with progress from worker threads.
@@ -257,7 +254,7 @@ mod tests {
         renderer.finish(&mut output).unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "\r\x1b[2Klong progress frame\r\x1b[2Kshort\nwarning: keep me\n\r\x1b[2Kfinal progress\n"
+            "\r\x1b[2Klong progress frame\r\x1b[2Kshort\r\x1b[2Kwarning: keep me\n\r\x1b[2Kfinal progress\r\x1b[2K"
         );
     }
 
