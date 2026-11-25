@@ -2,6 +2,33 @@
 use crate::support::Fixture;
 use std::fs;
 
+#[test]
+fn corrupt_installed_manifest_does_not_block_repair_or_removal() {
+    let f = Fixture::new();
+    f.single("app", "");
+    f.file("package.json", r#"{"dependencies":{"app":"1"}}"#);
+    let install = ["install", "--node-linker=isolated", "--ignore-scripts"];
+    let path = "node_modules/app/package.json";
+    let installed = f.root.join(path);
+    f.ok(&install);
+    let corrupt_manifest = || {
+        fs::remove_file(&installed).unwrap();
+        f.file(path, "{");
+    };
+    corrupt_manifest();
+    assert_eq!(f.ok(&install), "+ app@1.0.0\n\ninstalled 1 package\n");
+    let repaired = fs::read_to_string(&installed).unwrap();
+    nojson::RawJson::parse(&repaired).unwrap();
+    corrupt_manifest();
+    f.ok(&[
+        "remove",
+        "app",
+        "--node-linker=isolated",
+        "--ignore-scripts",
+    ]);
+    assert!(!installed.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn indexed_install_works_without_extracted_cache_and_preserves_bins() {

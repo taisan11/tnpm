@@ -215,7 +215,7 @@ pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
             } else {
                 super::isolated::package_path(root, &path)
             };
-            if let Some(data) = manifest::read(&directory)? {
+            if let Ok(Some(data)) = manifest::read(&directory) {
                 lock.packages.insert(path, data);
             }
         }
