@@ -26,7 +26,7 @@ pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
             .and_then(|e| e.str("name"))
             .zip(new.and_then(|e| e.str("name")));
         let identity_changed = names.is_some_and(|(a, b)| a != b);
-        if from == to && !identity_changed {
+        if old.is_some() == new.is_some() && from == to && !identity_changed {
             continue;
         }
         if options.json {
@@ -38,16 +38,16 @@ pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
             changes.push(change);
         } else {
             let name = path.strip_prefix("node_modules/").unwrap_or(path);
-            let line = match (from, to) {
-                (None, Some(to)) => {
+            let line = match (old, new) {
+                (None, Some(_)) => {
                     added += 1;
-                    format!("+ {name}@{to}")
+                    to.map_or_else(|| format!("+ {name}"), |to| format!("+ {name}@{to}"))
                 }
-                (Some(from), None) => {
+                (Some(_), None) => {
                     removed += 1;
-                    format!("- {name}@{from}")
+                    from.map_or_else(|| format!("- {name}"), |from| format!("- {name}@{from}"))
                 }
-                (from, to) => {
+                _ => {
                     updated += 1;
                     let (from, to) = (from.unwrap_or("?"), to.unwrap_or("?"));
                     if let Some((old, new)) = names.filter(|_| identity_changed) {

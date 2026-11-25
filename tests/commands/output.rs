@@ -53,6 +53,25 @@ fn package_results_escape_control_characters_in_versions() {
 }
 
 #[test]
+fn package_results_include_versionless_workspace_links() {
+    for linker in ["--node-linker=hoisted", "--node-linker=isolated"] {
+        let f = Fixture::new();
+        f.file("package.json", r#"{"workspaces":["packages/*"]}"#);
+        f.file("packages/local/package.json", r#"{"name":"local"}"#);
+        let install = ["install", linker, "--ignore-scripts"];
+        assert_eq!(f.ok(&install), "+ local\n\ninstalled 1 package\n");
+        assert!(f.root.join("node_modules/local/package.json").is_file());
+        assert_eq!(f.ok(&install), "No package changes.\n");
+        if linker == "--node-linker=isolated" {
+            f.file("package.json", "{}");
+            assert_eq!(f.ok(&install), "- local\n\nremoved 1 package\n");
+            assert!(!f.root.join("node_modules/local").exists());
+            assert!(f.root.join("packages/local/package.json").is_file());
+        }
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn run_supports_separator_before_script_and_exposes_original_lifecycle_script() {
     let f = Fixture::new();

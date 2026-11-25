@@ -12,7 +12,7 @@
 installed 1 package, updated 1 package, removed 1 package
 ```
 
-変更がなければ `No package changes.`（`update` では `No packages were updated.`）と表示します。解決・配置に失敗した場合は成功結果を表示しません。`--json` ではテキストの一覧を出さず、従来の JSON 形式を維持します。
+バージョンがない workspace の追加・削除では、名前だけを表示します。変更がなければ `No package changes.`（`update` では `No packages were updated.`）と表示します。解決・配置に失敗した場合は成功結果を表示しません。`--json` ではテキストの一覧を出さず、従来の JSON 形式を維持します。
 
 ## update と --latest
 
@@ -34,7 +34,7 @@ installed 1 package, updated 1 package, removed 1 package
 }
 ```
 
-mode は `installed` / `lockfile` / `planned`。追加・削除で存在しない側のバージョンは null です。更新なしでも `updated: 0` と空の changes 配列を返します。
+mode は `installed` / `lockfile` / `planned`。追加・削除で存在しない側や、バージョンのないパッケージのバージョンは null です。更新なしでも `updated: 0` と空の changes 配列を返します。
 
 インストール・更新系の `--json` 実行時は lifecycle スクリプトの標準出力も stderr に流し、stdout の JSON を保ちます。明示的な `run` / `exec` の実行結果は従来どおり stdout です。
 
