@@ -135,7 +135,7 @@ pub fn single_line_message(message_args: fmt::Arguments<'_>) {
     message(format_args!("{text}"));
 }
 
-fn escape_controls(text: &str) -> String {
+pub(crate) fn escape_controls(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
         if c.is_control() {

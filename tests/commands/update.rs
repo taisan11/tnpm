@@ -46,17 +46,7 @@ fn update_reports_before_after_versions_noop_and_single_json_document() {
         &[("1.0.0", ""), ("1.1.0", ""), ("2.0.0", "")],
     );
     let output = f.ok(&["update", "--no-cache", "--ignore-scripts"]);
-    for expected in [
-        "Package",
-        "Before",
-        "After",
-        "app",
-        "1.0.0",
-        "1.1.0",
-        "Updated 1 package.",
-    ] {
-        assert!(output.contains(expected), "{output}");
-    }
+    assert_eq!(output, "~ app 1.0.0 -> 1.1.0\n\nupdated 1 package\n");
     assert!(
         !output.contains("2.0.0"),
         "regular update must respect ^1: {output}"
@@ -92,6 +82,10 @@ fn update_lock_only_reports_resolution_changes_without_claiming_installation() {
     f.releases("app", "2.0.0", &[("1.0.0", ""), ("2.0.0", "")]);
     f.file("package.json", r#"{"dependencies":{"app":"1.0.0"}}"#);
     f.ok(&["install", "--package-lock-only"]);
+    assert_eq!(
+        f.ok(&["update", "--latest", "--package-lock-only", "--no-save",]),
+        "~ app 1.0.0 -> 2.0.0\n\nPlanned changes (not saved): updated 1 package\n"
+    );
     let output = f.ok(&[
         "update",
         "--latest",

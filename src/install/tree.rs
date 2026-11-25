@@ -141,26 +141,33 @@ pub(super) fn remove_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::SystemTime)> {
+fn hidden_entries(root: &Path) -> Option<(Vec<(String, Value)>, std::time::SystemTime)> {
     let path = root.join("node_modules/.tnpm-lock.json");
     let modified = fs::metadata(&path).ok()?.modified().ok()?;
     let value = Value::parse(&fs::read_to_string(path).ok()?).ok()?;
     if value.get("tnpmLockfileVersion") != Some(&Value::Number("1".into())) {
         return None;
     }
-    let entries = value.get("packages")?;
-    if !matches!(entries, Value::Object(_)) {
+    let Value::Object(fields) = value else {
         return None;
-    }
+    };
+    let (_, Value::Object(entries)) = fields.into_iter().find(|(k, _)| k == "packages")? else {
+        return None;
+    };
+    Some((entries, modified))
+}
+
+fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::SystemTime)> {
+    let (entries, modified) = hidden_entries(root)?;
     let mut packages = BTreeMap::new();
-    for (path, entry) in entries.members() {
-        if !lockfile::valid_location(path)
+    for (path, entry) in entries {
+        if !lockfile::valid_location(&path)
             || !matches!(entry, Value::Object(_))
-            || flag(entry, "link")
+            || flag(&entry, "link")
         {
             return None;
         }
-        let directory = root.join(path);
+        let directory = root.join(&path);
         if fs::symlink_metadata(&directory)
             .ok()?
             .file_type()
@@ -170,7 +177,7 @@ fn hidden_lock(root: &Path) -> Option<(BTreeMap<String, Value>, std::time::Syste
         {
             return None;
         }
-        packages.insert(path.clone(), entry.clone());
+        packages.insert(path, entry);
     }
     Some((packages, modified))
 }
@@ -190,17 +197,28 @@ fn scan(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
 pub(super) fn snapshot(ctx: &Context<'_>, root: &Path) -> Result<Lockfile> {
     ensure_safe_parents(root, "node_modules")?;
     if super::isolated::active(root) {
-        let mut lock = Lockfile::read(root)?.unwrap_or_default();
-        lock.packages.retain(|path, entry| {
-            !path.is_empty()
-                && if flag(entry, "link") {
-                    root.join(path).join("package.json").is_file()
-                } else {
-                    super::isolated::package_path(root, path)
-                        .join("package.json")
-                        .is_file()
-                }
-        });
+        let mut lock = Lockfile::default();
+        let entries = match hidden_entries(root) {
+            Some((entries, _)) => entries,
+            None => Lockfile::read(root)?
+                .unwrap_or_default()
+                .packages
+                .into_iter()
+                .collect(),
+        };
+        for (path, entry) in entries {
+            if !lockfile::valid_location(&path) {
+                continue;
+            }
+            let directory = if flag(&entry, "link") {
+                root.join(&path)
+            } else {
+                super::isolated::package_path(root, &path)
+            };
+            if let Some(data) = manifest::read(&directory)? {
+                lock.packages.insert(path, data);
+            }
+        }
         return Ok(lock);
     }
     scan(ctx, root)
@@ -782,7 +800,7 @@ pub(super) async fn materialize(
         let _ = fs::remove_dir_all(&stage);
     }
     result?;
-    if ctx.options.command != "update" {
+    if super::materialize_summary(ctx.options) {
         summary(ctx.options, "installed", changed.len());
     }
     Ok(())

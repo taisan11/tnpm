@@ -1,10 +1,6 @@
 //! Tables padded using raw display widths before adding terminal colors.
 use unicode_width::UnicodeWidthStr;
 
-pub fn format<const N: usize>(headers: [&str; N], rows: &[[String; N]]) -> String {
-    render(headers, rows, false, true)
-}
-
 pub fn format_plain<const N: usize>(headers: [&str; N], rows: &[[String; N]]) -> String {
     render(headers, rows, false, false)
 }

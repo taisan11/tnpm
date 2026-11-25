@@ -123,6 +123,14 @@ fn flag(data: &Value, key: &str) -> bool {
     data.get(key) == Some(&Value::Bool(true))
 }
 
+fn materialize_summary(options: &Options) -> bool {
+    match options.command.as_str() {
+        "update" => false,
+        "install" | "uninstall" => options.json,
+        _ => true,
+    }
+}
+
 fn summary(options: &Options, action: &str, count: usize) {
     if options.command == "runner-import" {
         return;
@@ -243,12 +251,11 @@ async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()
         }
         return Ok(());
     }
-    let before_update = if options.command == "update" {
-        Some(if options.lock_only {
-            old.clone().unwrap_or_default()
-        } else {
-            tree::snapshot(&ctx, root)?
-        })
+    let update = options.command == "update";
+    let before = if options.lock_only {
+        update.then(|| old.clone().unwrap_or_default())
+    } else if update || !options.json {
+        Some(tree::snapshot(&ctx, root)?)
     } else {
         None
     };
@@ -408,7 +415,7 @@ async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()
     }
     if options.lock_only {
         ctx.warn_peers(&lock);
-        if let Some(before) = &before_update {
+        if let Some(before) = &before {
             report::print(options, before, &lock);
         } else {
             summary(options, "locked", lock.packages.len().saturating_sub(1));
@@ -418,7 +425,7 @@ async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()
     profile.mark("lock_write_ms");
     materialize(&ctx, root, &effective, &lock, false).await?;
     profile.mark("materialize_ms");
-    if let Some(before) = &before_update {
+    if let Some(before) = &before {
         report::print(options, before, &tree::snapshot(&ctx, root)?);
     }
     drop(lock);

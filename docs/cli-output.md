@@ -1,22 +1,26 @@
 # CLI の結果表示・進捗・ビルド情報
 
+## パッケージ操作の結果
+
+`install` / `add`、`update`、`remove` / `uninstall` は、実際の `node_modules` の操作前後を比較し、追加（`+`）、更新（`~`）、削除（`-`）を stdout に表示します。推移的依存も対象で、ネストした依存はインストール先を含む名前で区別します。
+
+```text
++ foo@1.2.0
+~ bar 1.0.0 -> 1.1.0
+- baz@2.0.0
+
+installed 1 package, updated 1 package, removed 1 package
+```
+
+変更がなければ `No package changes.`（`update` では `No packages were updated.`）と表示します。解決・配置に失敗した場合は成功結果を表示しません。`--json` ではテキストの一覧を出さず、従来の JSON 形式を維持します。
+
 ## update と --latest
 
 - `update`: package.json の宣言範囲内で更新します。`^1.2.3` は 1.x 内、`~1.2.3` は 1.2.x 内、完全一致の `1.2.3` はそのバージョンを維持します。宣言は変更しません。
 - `update --latest`: major を含めて参照先の `latest` タグへ更新し、宣言も保存します。対象名を指定した場合はその直接依存だけ宣言を更新します。
 - `*` / `>=1` / 複数 major にまたがる OR 条件は、通常の update でも major を越える可能性があります。「宣言範囲内」と「常に同一 major」は異なります。
 
-成功した更新は実際の node_modules の更新前後を比較し、追加・削除・推移的依存の更新も表示します。ネストした依存はインストール先を含む名前で区別します。
-
-```text
-Package  Before  After
-app      1.0.0   1.1.0
-Updated 1 package.
-```
-
-変化がなければ `No packages were updated.` と表示します。追加前は `MISSING`、削除後は `REMOVED` です。解決・配置に失敗した場合は成功結果を表示しません。
-
-`--package-lock-only` では lockfile の更新前後を比較し、ディスクへ配置したとは表示しません。さらに `--no-save` を付けた場合は未保存の計画として扱います。
+`update --package-lock-only` では lockfile の更新前後を比較し、ディスクへ配置したとは表示しません。さらに `--no-save` を付けた場合は未保存の計画として扱います。
 
 `update --json` の stdout は単一の JSON オブジェクトです。
 

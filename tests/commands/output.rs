@@ -4,6 +4,55 @@ use crate::support;
 use crate::support::Fixture;
 
 #[test]
+fn package_commands_list_actual_changes_in_both_layouts() {
+    for linker in ["--node-linker=hoisted", "--node-linker=isolated"] {
+        let f = Fixture::new();
+        f.single("app", r#", "dependencies":{"leaf":"1"}"#);
+        f.single("leaf", "");
+        f.single("extra", "");
+        f.file("package.json", r#"{"dependencies":{"app":"^1.0.0"}}"#);
+        let run = |command, args: &[&str]| {
+            let mut all = vec![command, linker, "--ignore-scripts", "--no-save"];
+            all.extend_from_slice(args);
+            f.ok(&all)
+        };
+        assert_eq!(
+            run("install", &[]),
+            "+ app@1.0.0\n+ leaf@1.0.0\n\ninstalled 2 packages\n"
+        );
+        assert_eq!(run("install", &[]), "No package changes.\n");
+        f.releases(
+            "app",
+            "1.1.0",
+            &[("1.0.0", r#", "dependencies":{"leaf":"1"}"#), ("1.1.0", "")],
+        );
+        assert_eq!(
+            run("add", &["extra", "--no-cache"]),
+            "~ app 1.0.0 -> 1.1.0\n+ extra@1.0.0\n- leaf@1.0.0\n\ninstalled 1 package, updated 1 package, removed 1 package\n"
+        );
+        assert_eq!(
+            run("remove", &["app"]),
+            "- app@1.1.0\n- extra@1.0.0\n\nremoved 2 packages\n"
+        );
+        assert_eq!(run("uninstall", &["app"]), "No package changes.\n");
+    }
+}
+
+#[test]
+fn package_results_escape_control_characters_in_versions() {
+    let f = Fixture::new();
+    f.file("package.json", "{}");
+    f.file(
+        "node_modules/app/package.json",
+        r#"{"name":"app","version":"1.0.0\u001b\n"}"#,
+    );
+    assert_eq!(
+        f.ok(&["remove", "app", "--ignore-scripts"]),
+        "- app@1.0.0\\u{1b}\\n\n\nremoved 1 package\n"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn run_supports_separator_before_script_and_exposes_original_lifecycle_script() {
     let f = Fixture::new();
