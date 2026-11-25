@@ -35,6 +35,48 @@ fn isolated_update_prints_only_the_update_json_report() {
 }
 
 #[test]
+fn update_json_distinguishes_versionless_workspace_additions_and_removals() {
+    let f = Fixture::new();
+    f.file("package.json", r#"{"workspaces":["packages/*"]}"#);
+    f.file("packages/local/package.json", r#"{"name":"local"}"#);
+    for kind in ["added", "removed"] {
+        let output = f.ok(&[
+            "update",
+            "--json",
+            "--node-linker=isolated",
+            "--ignore-scripts",
+        ]);
+        let json = nojson::RawJson::parse(&output).unwrap();
+        let mut changes = json
+            .value()
+            .to_member("changes")
+            .unwrap()
+            .required()
+            .unwrap()
+            .to_array()
+            .unwrap();
+        let change = changes.next().unwrap();
+        assert!(changes.next().is_none(), "{output}");
+        let actual: &str = change
+            .to_member("kind")
+            .unwrap()
+            .required()
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(actual, kind, "{output}");
+        for expected in [
+            "\"from\": null",
+            "\"to\": null",
+            "\"location\": \"node_modules/local\"",
+        ] {
+            assert!(output.contains(expected), "{output}");
+        }
+        f.file("package.json", "{}");
+    }
+}
+
+#[test]
 fn update_reports_before_after_versions_noop_and_single_json_document() {
     let f = Fixture::new();
     f.single("app", "");
@@ -65,6 +107,7 @@ fn update_reports_before_after_versions_noop_and_single_json_document() {
     nojson::RawJson::parse(&output).unwrap();
     for expected in [
         "\"updated\": 1",
+        "\"kind\": \"updated\"",
         "\"from\": \"1.1.0\"",
         "\"to\": \"2.0.0\"",
         "\"mode\": \"installed\"",

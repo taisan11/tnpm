@@ -7,6 +7,22 @@ use crate::{
 };
 use std::collections::BTreeSet;
 
+enum ChangeKind {
+    Added,
+    Updated,
+    Removed,
+}
+
+impl ChangeKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Added => "added",
+            Self::Updated => "updated",
+            Self::Removed => "removed",
+        }
+    }
+}
+
 pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
     progress::finish();
     let paths: BTreeSet<_> = before
@@ -26,28 +42,32 @@ pub(super) fn print(options: &Options, before: &Lockfile, after: &Lockfile) {
             .and_then(|e| e.str("name"))
             .zip(new.and_then(|e| e.str("name")));
         let identity_changed = names.is_some_and(|(a, b)| a != b);
-        if old.is_some() == new.is_some() && from == to && !identity_changed {
-            continue;
-        }
+        let kind = match (old, new) {
+            (None, Some(_)) => ChangeKind::Added,
+            (Some(_), None) => ChangeKind::Removed,
+            (Some(_), Some(_)) if from != to || identity_changed => ChangeKind::Updated,
+            _ => continue,
+        };
         if options.json {
             let mut change = Value::object();
             change.set("name", Value::from(lockfile::name_at(path)));
+            change.set("kind", Value::from(kind.as_str()));
             change.set("from", from.map(Value::from).unwrap_or(Value::Null));
             change.set("to", to.map(Value::from).unwrap_or(Value::Null));
             change.set("location", Value::from(path.as_str()));
             changes.push(change);
         } else {
             let name = path.strip_prefix("node_modules/").unwrap_or(path);
-            let line = match (old, new) {
-                (None, Some(_)) => {
+            let line = match kind {
+                ChangeKind::Added => {
                     added += 1;
                     to.map_or_else(|| format!("+ {name}"), |to| format!("+ {name}@{to}"))
                 }
-                (Some(_), None) => {
+                ChangeKind::Removed => {
                     removed += 1;
                     from.map_or_else(|| format!("- {name}"), |from| format!("- {name}@{from}"))
                 }
-                _ => {
+                ChangeKind::Updated => {
                     updated += 1;
                     let (from, to) = (from.unwrap_or("?"), to.unwrap_or("?"));
                     if let Some((old, new)) = names.filter(|_| identity_changed) {

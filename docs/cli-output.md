@@ -29,12 +29,12 @@ installed 1 package, updated 1 package, removed 1 package
   "updated": 1,
   "mode": "installed",
   "changes": [
-    {"name": "app", "from": "1.0.0", "to": "1.1.0", "location": "node_modules/app"}
+    {"name": "app", "kind": "updated", "from": "1.0.0", "to": "1.1.0", "location": "node_modules/app"}
   ]
 }
 ```
 
-mode は `installed` / `lockfile` / `planned`。追加・削除で存在しない側や、バージョンのないパッケージのバージョンは null です。更新なしでも `updated: 0` と空の changes 配列を返します。
+mode は `installed` / `lockfile` / `planned`、各変更の kind は `added` / `updated` / `removed` です。追加・削除で存在しない側や、バージョンのないパッケージのバージョンは null です。変更なしでも `updated: 0` と空の changes 配列を返します。
 
 インストール・更新系の `--json` 実行時は lifecycle スクリプトの標準出力も stderr に流し、stdout の JSON を保ちます。明示的な `run` / `exec` の実行結果は従来どおり stdout です。
 
