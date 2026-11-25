@@ -130,6 +130,23 @@ pub fn message(message: fmt::Arguments<'_>) {
     let _ = renderer.message(&mut io::stderr().lock(), format_args!("{text}"));
 }
 
+pub fn single_line_message(message_args: fmt::Arguments<'_>) {
+    let text = escape_controls(&message_args.to_string());
+    message(format_args!("{text}"));
+}
+
+fn escape_controls(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            escaped.extend(c.escape_default());
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
 pub fn active() -> bool {
     RENDERER.lock().unwrap_or_else(|e| e.into_inner()).active
 }
@@ -239,6 +256,14 @@ impl Drop for Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_line_diagnostics_escape_controls_and_preserve_unicode() {
+        assert_eq!(
+            escape_controls("archive\u{1b}\n\r\u{9b}日本語"),
+            r"archive\u{1b}\n\r\u{9b}日本語"
+        );
+    }
 
     #[test]
     fn counters_are_deduplicated_and_allow_discovery_after_completion() {

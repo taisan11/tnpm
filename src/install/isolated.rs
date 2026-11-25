@@ -170,7 +170,9 @@ pub(super) async fn try_install(
             Ok(Some(destination)) => prepared.push((path.clone(), destination)),
             Ok(None) => return Ok(false),
             Err(error) if flag(entry, "optional") => {
-                progress::message(format_args!("tnpm: skipped optional {path}: {error:#}"));
+                progress::single_line_message(format_args!(
+                    "tnpm: skipped optional {path}: {error:#}"
+                ));
                 selected.remove(path);
             }
             Err(error) => return Err(error).with_context(|| format!("could not prepare {path}")),
