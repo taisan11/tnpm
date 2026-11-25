@@ -124,7 +124,7 @@ fn every_command_finishes_with_build_version_on_stderr_and_preserves_exit_codes(
 }
 
 #[test]
-fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
+fn install_logs_short_phase_counters_on_stderr() {
     use std::collections::BTreeMap;
     let f = Fixture::new();
     f.single("app", r#", "dependencies":{"child":"1"}"#);
@@ -140,43 +140,45 @@ fn install_logs_network_cache_extraction_and_placement_progress_on_stderr() {
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(!error.contains('\r'));
     assert!(!error.contains('\x1b'));
-    for expected in [
-        "HTTP GET metadata app",
-        "HTTP GET metadata child",
-        "HTTP GET tarball app",
-        "HTTP GET tarball child",
-        "extract node_modules/app",
-        "place:",
-        "node_modules/child",
-    ] {
-        assert!(error.contains(expected), "{error}");
-    }
     assert!(!error.contains("http://"), "{error}");
     assert!(!error.contains("https://"), "{error}");
+    assert!(!error.contains("HTTP GET"), "{error}");
+    assert!(!error.contains("node_modules"), "{error}");
     let mut phases = BTreeMap::new();
     for line in error.lines() {
-        let Some(rest) = line.strip_prefix("tnpm: [") else {
+        if matches!(line, "Resolving" | "Preparing") || line.starts_with("tnpm v") {
             continue;
-        };
-        let (counts, detail) = rest.split_once("] ").unwrap();
+        }
+        let (phase, counts) = line.split_once(" [").unwrap();
+        let counts = counts.strip_suffix(']').unwrap();
         let (done, total) = counts.split_once('/').unwrap();
         let (done, total) = (
             done.parse::<usize>().unwrap(),
             total.parse::<usize>().unwrap(),
         );
         assert!(done <= total);
-        let (phase, _) = detail.split_once(": ").unwrap();
-        let previous = phases.insert(phase, (done, total)).unwrap_or_default();
-        assert!(previous.0 <= done && previous.1 <= total, "{line}");
+        assert!(
+            matches!(phase, "Resolving" | "Preparing" | "Linking"),
+            "{line}"
+        );
+        if let Some(previous) = phases.insert(phase, (done, total)) {
+            assert!(previous.0 <= done && previous.1 <= total, "{line}");
+            assert_ne!(previous, (done, total), "{line}");
+        }
     }
-    assert_eq!(phases["resolve"], (2, 2));
-    assert_eq!(phases["prepare"], (2, 2));
-    assert_eq!(phases["place"], (2, 2));
+    assert_eq!(phases["Resolving"], (2, 2));
+    assert_eq!(phases["Preparing"], (2, 2));
+    assert_eq!(phases["Linking"], (2, 2));
+    assert!(error.contains("Preparing [0/2]\n"), "{error}");
+    assert!(error.contains("Linking [0/2]\n"), "{error}");
     let output = f.invoke(&["install", "--ignore-scripts"]);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no packages need placement"));
+    assert!(output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(error.lines().count(), 2, "{error}");
+    assert_eq!(error.lines().next(), Some("Resolving"), "{error}");
     let output = f.invoke(&["ci", "--ignore-scripts"]);
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("clone package cache"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Preparing [2/2]"));
 }
 
 #[test]
@@ -193,6 +195,7 @@ fn terminal_progress_replaces_one_row_without_hiding_warnings_scripts_or_footer(
     assert!(output.status.success(), "{error}");
     nojson::RawJson::parse(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert!(error.contains("\r\x1b[2K"), "{error:?}");
+    assert!(error.contains("Resolving ["), "{error:?}");
     let error = support::strip_ansi(&error);
     let warning = error
         .find("tnpm: warning: overriding peer dependency")
@@ -229,7 +232,7 @@ fn terminal_progress_is_cleared_before_an_install_error() {
     assert_eq!(output.status.code(), Some(7));
     let error = String::from_utf8(output.stderr).unwrap();
     let (progress, diagnostic) = error.rsplit_once("\r\x1b[2K").unwrap();
-    assert!(progress.contains("scripts: "), "{error:?}");
+    assert!(progress.contains("Running scripts ["), "{error:?}");
     assert!(!progress.contains('\n'), "{error:?}");
     assert!(
         support::strip_ansi(diagnostic).starts_with("tnpm: preinstall script failed"),
@@ -246,7 +249,7 @@ fn dumb_terminals_keep_plain_progress_logs() {
     assert!(output.status.success());
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(!error.contains('\x1b'));
-    assert!(error.contains("tnpm: [0/0] resolve:"));
+    assert_eq!(error.lines().next(), Some("Resolving"), "{error}");
 }
 
 #[test]
@@ -268,7 +271,7 @@ fn install_and_update_json_keep_lifecycle_output_on_stderr() {
         nojson::RawJson::parse(&stdout).unwrap();
         assert!(!stdout.contains("marker"));
         let error = String::from_utf8(output.stderr).unwrap();
-        assert!(error.contains("scripts:"));
+        assert!(error.contains("Running scripts ["));
         assert!(error.contains("root-preinstall-marker"));
         assert!(error.contains("root-postinstall-marker"));
         if command == "install" {

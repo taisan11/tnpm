@@ -209,7 +209,7 @@ pub(super) async fn metadata(ctx: &Context<'_>, name: &str, spec: &str) -> Resul
     if is_tarball(spec) {
         let mut entry = Value::object();
         entry.set("resolved", Value::from(spec));
-        let bytes = store::tarball(ctx, &entry, name).await?;
+        let bytes = store::tarball(ctx, &entry).await?;
         let temp = tempfile::tempdir()?;
         store::unpack(&bytes, temp.path())?;
         let data = manifest::read(temp.path())?.context("remote archive has no package.json")?;

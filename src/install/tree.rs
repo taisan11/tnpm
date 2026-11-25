@@ -5,6 +5,7 @@ use crate::{
     json::Value,
     lockfile::{self, Lockfile},
     manifest, scripts,
+    util::style::progress::Phase,
 };
 use anyhow::{Context as _, Result, bail};
 use futures_util::{StreamExt, stream};
@@ -475,8 +476,6 @@ pub(super) async fn materialize(
                 workspace_modules.insert(target.join("node_modules"));
             }
         }
-        ctx.progress
-            .event("place", "removing existing node_modules for clean install");
         remove_path(&root.join("node_modules"))?;
         for modules in workspace_modules {
             remove_path(&modules)?;
@@ -493,10 +492,6 @@ pub(super) async fn materialize(
         ctx.lifecycle(root, manifest, "preinstall")?;
     }
     fs::create_dir_all(root.join("node_modules"))?;
-    ctx.progress.event(
-        "prepare",
-        &format!("scanning {}", root.join("node_modules").display()),
-    );
     let installed = scan(ctx, root)?;
     let mut changed = BTreeSet::new();
     let mut jobs: BTreeSet<_> = selected
@@ -530,13 +525,8 @@ pub(super) async fn materialize(
         }
     }
     let jobs: Vec<_> = jobs.into_iter().collect();
-    for path in &jobs {
-        ctx.progress.start("prepare", path);
-    }
-    if jobs.is_empty() {
-        ctx.progress
-            .event("prepare", "all installed packages are reusable");
-    }
+    ctx.progress
+        .start_many(Phase::Preparing, jobs.iter().map(String::as_str));
     // Clone cached packages or download/decompress concurrently, then commit parent-first.
     let stage =
         root.join("node_modules")
@@ -563,8 +553,6 @@ pub(super) async fn materialize(
                         .as_deref()
                         .and_then(|cache| cached_package(cache, entry.str("integrity")))
                     {
-                        ctx.progress
-                            .event("prepare", &format!("clone package cache {path}"));
                         let dest = destination.clone();
                         let clones = ctx.clones.clone();
                         let cache_hit = tokio::task::spawn_blocking(move || {
@@ -579,8 +567,7 @@ pub(super) async fn materialize(
                         // optimization failure; fall back to the verified tarball.
                         remove_path(&destination)?;
                     }
-                    let bytes = tarball(ctx, entry, lockfile::name_at(path)).await?;
-                    ctx.progress.event("prepare", &format!("extract {path}"));
+                    let bytes = tarball(ctx, entry).await?;
                     let dest = destination.clone();
                     let cache = package_cache.clone();
                     let integrity = entry.str("integrity").map(str::to_owned);
@@ -626,17 +613,7 @@ pub(super) async fn materialize(
                 }
                 .await
                 .with_context(|| format!("could not prepare {path}"));
-                ctx.progress.finish(
-                    "prepare",
-                    path,
-                    if result.is_ok() {
-                        "prepared"
-                    } else if flag(entry, "optional") {
-                        "skipped"
-                    } else {
-                        "failed"
-                    },
-                );
+                ctx.progress.complete(Phase::Preparing, path);
                 (path.clone(), destination, result)
             }
         }))
@@ -661,12 +638,8 @@ pub(super) async fn materialize(
         }
         retain_reachable(lock, manifest, &mut selected)?;
         prepared.retain(|path, _| selected.contains(path));
-        for path in prepared.keys() {
-            ctx.progress.start("place", path);
-        }
-        if prepared.is_empty() {
-            ctx.progress.event("place", "no packages need placement");
-        }
+        ctx.progress
+            .start_many(Phase::Linking, prepared.keys().map(String::as_str));
         // BTree order guarantees parent locations precede their nested packages.
         for (path, source) in prepared {
             let destination = root.join(&path);
@@ -674,22 +647,15 @@ pub(super) async fn materialize(
             remove_path(&destination)?;
             fs::create_dir_all(destination.parent().unwrap())?;
             fs::rename(source, destination)?;
-            ctx.progress.finish(
-                "place",
-                &path,
-                &format!(
-                    "installed {} at",
-                    lock.packages[&path].str("version").unwrap_or("")
-                ),
-            );
+            ctx.progress.complete(Phase::Linking, &path);
             changed.insert(path);
         }
         for path in installed.packages.keys().rev() {
             if !selected.contains(path) {
-                ctx.progress.start("remove", path);
+                ctx.progress.start(Phase::Removing, path);
                 ensure_install_path(ctx, root, path, lock)?;
                 remove_path(&root.join(path))?;
-                ctx.progress.finish("remove", path, "removed");
+                ctx.progress.complete(Phase::Removing, path);
             }
         }
         profile.mark("placement_ms");
@@ -733,7 +699,6 @@ pub(super) async fn materialize(
                 .all(|(name, _)| modules.join(name).is_file())
         });
         if !tree_unchanged || !bins_exist {
-            ctx.progress.event("place", "linking package binaries");
             link_bins(ctx, root, &selected, lock)?;
         }
         profile.mark("bins_ms");
@@ -798,7 +763,6 @@ pub(super) async fn materialize(
             }
         }
         if ctx.config.get("node-linker") == Some("isolated") {
-            ctx.progress.event("place", "linking isolated dependencies");
             super::isolated::convert(ctx, root, manifest, lock, &selected)?;
         }
         profile.mark("hooks_ms");

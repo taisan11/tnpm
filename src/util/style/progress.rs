@@ -134,15 +134,36 @@ pub fn active() -> bool {
     RENDERER.lock().unwrap_or_else(|e| e.into_inner()).active
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Phase {
+    Resolving,
+    Preparing,
+    Linking,
+    Removing,
+    RunningScripts,
+}
+
+impl Phase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Resolving => "Resolving",
+            Self::Preparing => "Preparing",
+            Self::Linking => "Linking",
+            Self::Removing => "Removing",
+            Self::RunningScripts => "Running scripts",
+        }
+    }
+}
+
 #[derive(Default)]
-struct Phase {
+struct Counts {
     discovered: BTreeSet<String>,
     finished: BTreeSet<String>,
 }
 
 pub struct Progress {
     enabled: bool,
-    phases: RefCell<BTreeMap<&'static str, Phase>>,
+    phases: RefCell<BTreeMap<Phase, Counts>>,
 }
 
 impl Progress {
@@ -153,23 +174,26 @@ impl Progress {
         }
     }
 
-    pub fn start(&self, phase: &'static str, package: &str) {
+    pub fn start(&self, phase: Phase, package: &str) {
+        self.start_many(phase, std::iter::once(package));
+    }
+
+    pub fn start_many<'a>(&self, phase: Phase, packages: impl Iterator<Item = &'a str>) {
         if !self.enabled {
             return;
         }
-        let inserted = self
-            .phases
-            .borrow_mut()
-            .entry(phase)
-            .or_default()
-            .discovered
-            .insert(package.into());
-        if inserted {
-            self.event(phase, &format!("checking {package}"));
+        let mut phases = self.phases.borrow_mut();
+        let discovered = &mut phases.entry(phase).or_default().discovered;
+        let previous = discovered.len();
+        discovered.extend(packages.map(str::to_owned));
+        let changed = previous != discovered.len();
+        drop(phases);
+        if changed {
+            self.show(phase);
         }
     }
 
-    pub fn finish(&self, phase: &'static str, package: &str, outcome: &str) {
+    pub fn complete(&self, phase: Phase, package: &str) {
         if !self.enabled {
             return;
         }
@@ -179,29 +203,25 @@ impl Progress {
         let inserted = state.finished.insert(package.into());
         drop(phases);
         if inserted {
-            self.event(phase, &format!("{outcome} {package}"));
+            self.show(phase);
         }
     }
 
-    pub fn event(&self, phase: &'static str, detail: &str) {
+    pub fn show(&self, phase: Phase) {
         if !self.enabled {
             return;
         }
         let phases = self.phases.borrow();
         let (done, total) = phases
-            .get(phase)
+            .get(&phase)
             .map(|p| (p.finished.len(), p.discovered.len()))
             .unwrap_or_default();
-        // Never allow package/registry data to inject terminal escape sequences.
-        let mut clean = String::new();
-        for c in detail.chars() {
-            if c.is_control() {
-                clean.extend(c.escape_default());
-            } else {
-                clean.push(c);
-            }
-        }
-        let line = format!("tnpm: [{done}/{total}] {phase}: {clean}");
+        let label = phase.label();
+        let line = if total == 0 {
+            label.to_owned()
+        } else {
+            format!("{label} [{done}/{total}]")
+        };
         let columns = interactive_columns();
         let mut renderer = RENDERER.lock().unwrap_or_else(|e| e.into_inner());
         let _ = renderer.render(&mut io::stderr().lock(), &line, columns);
@@ -223,13 +243,13 @@ mod tests {
     #[test]
     fn counters_are_deduplicated_and_allow_discovery_after_completion() {
         let p = Progress::new(true);
-        p.start("resolve", "a");
-        p.finish("resolve", "a", "resolved");
-        p.start("resolve", "b");
-        p.finish("resolve", "a", "resolved");
+        p.start(Phase::Resolving, "a");
+        p.complete(Phase::Resolving, "a");
+        p.start(Phase::Resolving, "b");
+        p.complete(Phase::Resolving, "a");
         let phases = p.phases.borrow();
-        assert_eq!(phases["resolve"].discovered.len(), 2);
-        assert_eq!(phases["resolve"].finished.len(), 1);
+        assert_eq!(phases[&Phase::Resolving].discovered.len(), 2);
+        assert_eq!(phases[&Phase::Resolving].finished.len(), 1);
     }
 
     #[test]

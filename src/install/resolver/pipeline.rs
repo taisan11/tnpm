@@ -1,6 +1,6 @@
 use super::{Context, Value, descriptor};
 use crate::install::store;
-use crate::{lockfile, spec};
+use crate::{lockfile, spec, util::style::progress::Phase};
 use anyhow::Result;
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -95,20 +95,10 @@ impl<'c, 'o> Pipeline<'c, 'o> {
             let ctx = self.ctx;
             self.preparing.push(
                 async move {
-                    let result = async {
-                        let cache =
-                            store::package_cache_path(ctx, &entry, &format!("node_modules/{name}"))
-                                .unwrap();
-                        store::prefetch_package(ctx, &entry, &name, cache).await?;
-                        Ok::<_, anyhow::Error>(())
-                    }
-                    .await;
-                    if let Err(error) = result {
-                        ctx.progress.event(
-                            "prepare",
-                            &format!("deferred package prefetch {name}: {error:#}"),
-                        );
-                    }
+                    let cache =
+                        store::package_cache_path(ctx, &entry, &format!("node_modules/{name}"))
+                            .unwrap();
+                    let _ = store::prefetch_package(ctx, &entry, &name, cache).await;
                 }
                 .boxed_local(),
             );
@@ -123,6 +113,9 @@ impl<'c, 'o> Pipeline<'c, 'o> {
     }
 
     pub(super) async fn finish(&mut self) {
+        if !self.packages.is_empty() || !self.preparing.is_empty() {
+            self.ctx.progress.show(Phase::Preparing);
+        }
         loop {
             self.start_preparing();
             if self.preparing.next().await.is_none() {

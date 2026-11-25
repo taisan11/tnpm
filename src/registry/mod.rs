@@ -8,7 +8,6 @@ use crate::{
     json::Value,
     profile::Profile,
     semver::{Range, Version},
-    util::style::progress::Progress,
 };
 use anyhow::{Context, Result, bail};
 use futures_util::{
@@ -286,7 +285,6 @@ pub async fn fetch_using(
     query: Query<'_>,
     no_cache: bool,
     client: impl FnOnce() -> Result<reqwest::Client>,
-    progress: Option<(&Progress, &str)>,
 ) -> Result<Package> {
     let mut profile = Profile::new("registry");
     let transport = Transport::current();
@@ -331,9 +329,6 @@ pub async fn fetch_using(
     {
         profile.mark("cache_resolve_ms");
         profile.text("source", "fresh-cache");
-        if let Some((progress, name)) = progress {
-            progress.event("resolve", &format!("metadata cache {name}"));
-        }
         return Ok(package);
     }
     profile.mark("cache_resolve_ms");
@@ -361,9 +356,6 @@ pub async fn fetch_using(
             request = request.header(reqwest::header::AUTHORIZATION, authorization);
         }
         profile.mark("request_build_ms");
-        if let Some((progress, name)) = progress {
-            progress.event("resolve", &format!("HTTP GET metadata {name}"));
-        }
         let request_time = SystemTime::now();
         let response = send_with_retry(&request)
             .await?
@@ -416,9 +408,6 @@ pub async fn fetch_using(
             }
             profile.mark("cache_refresh_ms");
             profile.text("source", "revalidated-cache");
-            if let Some((progress, name)) = progress {
-                progress.event("resolve", &format!("metadata revalidated (304) {name}"));
-            }
             return Ok(package);
         }
         if response.status() != reqwest::StatusCode::OK {

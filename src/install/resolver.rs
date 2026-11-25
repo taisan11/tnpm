@@ -4,6 +4,7 @@ use crate::{
     json::Value,
     lockfile::{self, Dependency, Lockfile},
     spec,
+    util::style::progress::Phase,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -173,7 +174,7 @@ pub(super) async fn resolve(
     mut memo: FxHashMap<(String, String), Value>,
 ) -> Result<Lockfile> {
     let mut profile = crate::profile::Profile::new("resolve");
-    ctx.progress.event("resolve", "checking dependency graph");
+    ctx.progress.show(Phase::Resolving);
     super::overrides::validate(manifest)?;
     // Workspace and file: sources can change without the root manifest, so they
     // always re-resolve. Git/tarball locks are pinned and may be reused.
@@ -197,13 +198,6 @@ pub(super) async fn resolve(
                 .retain(|p, _| p.is_empty() || used.contains(p));
             lock.packages
                 .insert("".into(), lockfile::root_entry(manifest));
-            ctx.progress.event(
-                "resolve",
-                &format!(
-                    "reusing {} locked packages",
-                    lock.packages.len().saturating_sub(1)
-                ),
-            );
             return Ok(lock);
         }
     }
@@ -384,8 +378,6 @@ pub(super) async fn resolve(
     }
     profile.mark("metadata_pipeline_ms");
     if !lock.finalize(manifest, ctx.peer_policy())? {
-        ctx.progress
-            .event("resolve", "checking peer dependency sets");
         // Keep the parallel fast path for peer-free trees. Peer sets need a joint
         // placement/version search rather than independent greedy hoisting.
         return peers::resolve(ctx, manifest, old, update).await;

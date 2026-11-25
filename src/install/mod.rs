@@ -244,8 +244,6 @@ async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()
         return Ok(());
     }
     let before_update = if options.command == "update" {
-        ctx.progress
-            .event("prepare", "recording package versions before update");
         Some(if options.lock_only {
             old.clone().unwrap_or_default()
         } else {
@@ -421,10 +419,6 @@ async fn run_inner(root: &Path, options: &Options, config: &Config) -> Result<()
     materialize(&ctx, root, &effective, &lock, false).await?;
     profile.mark("materialize_ms");
     if let Some(before) = &before_update {
-        ctx.progress.event(
-            "place",
-            "verifying installed versions for the update report",
-        );
         report::print(options, before, &tree::snapshot(&ctx, root)?);
     }
     drop(lock);
