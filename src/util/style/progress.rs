@@ -158,6 +158,10 @@ pub enum Phase {
     Linking,
     Removing,
     RunningScripts,
+    CheckingForUpdates,
+    Downloading,
+    Verifying,
+    Replacing,
 }
 
 impl Phase {
@@ -168,6 +172,10 @@ impl Phase {
             Self::Linking => "Linking",
             Self::Removing => "Removing",
             Self::RunningScripts => "Running scripts",
+            Self::CheckingForUpdates => "Checking for updates",
+            Self::Downloading => "Downloading",
+            Self::Verifying => "Verifying",
+            Self::Replacing => "Replacing",
         }
     }
 }

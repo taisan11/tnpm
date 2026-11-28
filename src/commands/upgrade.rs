@@ -4,7 +4,12 @@ use std::{cmp::Ordering, io::Write, time::Duration};
 use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 
-use crate::{cli::Options, json::Value, semver::Version};
+use crate::{
+    cli::Options,
+    json::Value,
+    semver::Version,
+    util::style::progress::{Phase, Progress},
+};
 
 const API: &str = "https://api.github.com/repos/taisan11/tnpm/releases/latest";
 const DOWNLOAD_BASE: &str = "https://github.com/taisan11/tnpm/releases/download/";
@@ -86,7 +91,9 @@ async fn download_update(
     base: &str,
     asset: &str,
     current: &str,
+    progress: &Progress,
 ) -> Result<Option<(String, Vec<u8>)>> {
+    progress.show(Phase::CheckingForUpdates);
     let metadata = get_limited(client, api.parse()?, MAX_METADATA)
         .await
         .context("could not fetch latest GitHub release")?;
@@ -100,9 +107,11 @@ async fn download_update(
         .pop_if_empty()
         .push(&release.tag)
         .push(asset);
+    progress.show(Phase::Downloading);
     let bytes = get_limited(client, url, MAX_BINARY)
         .await
         .context("could not download release binary")?;
+    progress.show(Phase::Verifying);
     let actual = const_hex::encode(Sha256::digest(&bytes));
     ensure!(
         actual == release.digest,
@@ -117,54 +126,69 @@ pub async fn run(options: &Options) -> Result<()> {
         .user_agent(concat!("tnpm/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(120))
         .build()?;
-    let Some((tag, bytes)) = download_update(
+    run_update(
         &client,
         API,
         DOWNLOAD_BASE,
         asset,
         env!("CARGO_PKG_VERSION"),
+        options.json,
+        replace_executable,
     )
-    .await?
-    else {
-        if options.json {
-            println!(
-                "{}",
-                nojson::json(|f| f.object(|f| {
-                    f.member("updated", false)?;
-                    f.member("version", env!("CARGO_PKG_VERSION"))
-                }))
-            );
-        } else {
-            println!(
-                "tnpm is already up to date (v{}).",
-                env!("CARGO_PKG_VERSION")
-            );
-        }
-        return Ok(());
+    .await
+}
+
+async fn run_update(
+    client: &reqwest::Client,
+    api: &str,
+    base: &str,
+    asset: &str,
+    current: &str,
+    json: bool,
+    replace: impl FnOnce(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let progress = Progress::new(true);
+    let tag = if let Some((tag, bytes)) =
+        download_update(client, api, base, asset, current, &progress).await?
+    {
+        progress.show(Phase::Replacing);
+        replace(&bytes)?;
+        Some(tag)
+    } else {
+        None
     };
+    drop(progress);
+    if json {
+        let version = tag
+            .as_deref()
+            .map_or(current, |tag| tag.strip_prefix('v').unwrap_or(tag));
+        println!(
+            "{}",
+            nojson::json(|f| f.object(|f| {
+                f.member("updated", tag.is_some())?;
+                f.member("version", version)
+            }))
+        );
+    } else if let Some(tag) = tag {
+        println!("Updated tnpm to {tag}.");
+    } else {
+        println!("tnpm is already up to date (v{current}).");
+    }
+    Ok(())
+}
+
+fn replace_executable(bytes: &[u8]) -> Result<()> {
     let mut temporary =
         tempfile::NamedTempFile::new().context("could not create temporary update file")?;
     temporary
-        .write_all(&bytes)
+        .write_all(bytes)
         .context("could not write update")?;
     temporary.flush()?;
     let temporary = temporary.into_temp_path();
     // self-replace uses an atomic rename on Unix; Windows moves the locked executable
     // aside and starts a cleanup helper which waits for this process to exit.
     self_replace::self_replace(&temporary)
-        .context("could not replace tnpm executable; check installation directory permissions")?;
-    if options.json {
-        println!(
-            "{}",
-            nojson::json(|f| f.object(|f| {
-                f.member("updated", true)?;
-                f.member("version", tag.strip_prefix('v').unwrap_or(&tag))
-            }))
-        );
-    } else {
-        println!("Updated tnpm to {tag}.");
-    }
-    Ok(())
+        .context("could not replace tnpm executable; check installation directory permissions")
 }
 
 #[cfg(test)]
@@ -202,12 +226,16 @@ mod tests {
         assert!(select_release(&duplicate, "binary", "1.0.0").is_err());
     }
 
-    fn fixture_server(bad_digest: bool) -> (String, thread::JoinHandle<Vec<String>>) {
+    fn fixture_server(
+        tag: &'static str,
+        bad_digest: bool,
+        request_count: usize,
+    ) -> (String, thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
         let handle = thread::spawn(move || {
             let mut paths = Vec::new();
-            for stream in listener.incoming().take(2) {
+            for stream in listener.incoming().take(request_count) {
                 let mut stream = stream.unwrap();
                 let mut request = Vec::new();
                 let mut byte = [0];
@@ -225,7 +253,7 @@ mod tests {
                     } else {
                         const_hex::encode(Sha256::digest(b"new executable"))
                     };
-                    format!(r#"{{"tag_name":"v1.2.3","assets":[{{"name":"binary","digest":"sha256:{digest}","browser_download_url":"https://evil.invalid/ignored"}}]}}"#).into_bytes()
+                    format!(r#"{{"tag_name":"{tag}","assets":[{{"name":"binary","digest":"sha256:{digest}","browser_download_url":"https://evil.invalid/ignored"}}]}}"#).into_bytes()
                 } else {
                     b"new executable".to_vec()
                 };
@@ -246,7 +274,7 @@ mod tests {
     #[test]
     fn downloads_official_asset_and_rejects_modified_binary() {
         for bad_digest in [false, true] {
-            let (base, server) = fixture_server(bad_digest);
+            let (base, server) = fixture_server("v1.2.3", bad_digest, 2);
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -257,6 +285,7 @@ mod tests {
                 &format!("{base}download/"),
                 "binary",
                 "1.0.0",
+                &Progress::new(false),
             ));
             if bad_digest {
                 assert!(result.unwrap_err().to_string().contains("SHA-256 mismatch"));
@@ -269,6 +298,86 @@ mod tests {
                 server.join().unwrap(),
                 ["/latest", "/download/v1.2.3/binary"]
             );
+        }
+    }
+
+    #[test]
+    fn reports_upgrade_progress_on_stderr() {
+        const BASE: &str = "TNPM_UPGRADE_TEST_BASE";
+        const JSON: &str = "TNPM_UPGRADE_TEST_JSON";
+        if let Ok(base) = std::env::var(BASE) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(run_update(
+                &reqwest::Client::builder().no_proxy().build().unwrap(),
+                &format!("{base}latest"),
+                &format!("{base}download/"),
+                "binary",
+                "1.0.0",
+                std::env::var_os(JSON).is_some(),
+                |bytes| {
+                    assert_eq!(bytes, b"new executable");
+                    Ok(())
+                },
+            ))
+            .unwrap();
+            return;
+        }
+
+        for updated in [true, false] {
+            for json in [false, true] {
+                let (base, server) = if updated {
+                    fixture_server("v1.2.3", false, 2)
+                } else {
+                    fixture_server("v1.0.0", false, 1)
+                };
+                let mut child = Command::new(std::env::current_exe().unwrap());
+                child
+                    .args([
+                        "--exact",
+                        "commands::upgrade::tests::reports_upgrade_progress_on_stderr",
+                        "--nocapture",
+                    ])
+                    .env(BASE, base)
+                    .env_remove(JSON);
+                if json {
+                    child.env(JSON, "1");
+                }
+                let output = child.output().unwrap();
+                let stderr = String::from_utf8(output.stderr).unwrap();
+                assert!(output.status.success(), "{stderr}");
+                assert_eq!(
+                    stderr,
+                    if updated {
+                        "Checking for updates\nDownloading\nVerifying\nReplacing\n"
+                    } else {
+                        "Checking for updates\n"
+                    }
+                );
+                let stdout = String::from_utf8(output.stdout).unwrap();
+                let result = match (updated, json) {
+                    (true, false) => "Updated tnpm to v1.2.3.",
+                    (false, false) => "tnpm is already up to date (v1.0.0).",
+                    (true, true) => r#"{"updated":true,"version":"1.2.3"}"#,
+                    (false, true) => r#"{"updated":false,"version":"1.0.0"}"#,
+                };
+                assert_eq!(
+                    stdout
+                        .lines()
+                        .filter(|line| {
+                            !line.is_empty()
+                                && !line.starts_with("running ")
+                                && !line.starts_with("test ")
+                        })
+                        .collect::<Vec<_>>(),
+                    [result],
+                    "{stdout:?}"
+                );
+                let paths = server.join().unwrap();
+                assert_eq!(paths.len(), if updated { 2 } else { 1 });
+            }
         }
     }
 
